@@ -4,16 +4,15 @@ description: "Sets up Node.js and runs install"
 runs:
     using: composite
     steps:
+        - name: Install pnpm
+          uses: pnpm/action-setup@v4
+
         - name: Setup Node.js environment
           uses: actions/setup-node@v3
           with:
               node-version: 20
               cache: "pnpm"
               registry-url: "https://registry.npmjs.org"
-
-        - name: Install pnpm
-          uses: pnpm/action-setup@v4
-          continue-on-error: true
 
         - name: Setup Git User
           shell: bash
