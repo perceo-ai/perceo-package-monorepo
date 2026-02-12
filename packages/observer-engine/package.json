@@ -1,0 +1,33 @@
+{
+	"name": "@perceo/observer-engine",
+	"version": "0.1.0",
+	"description": "Observer Engine core used by the Perceo CLI for flow/persona bootstrap and change impact analysis.",
+	"keywords": [
+		"perceo",
+		"observer",
+		"analysis",
+		"flows",
+		"ci"
+	],
+	"license": "MIT",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsup src/index.ts --format esm --dts --clean",
+		"dev": "tsup src/index.ts --format esm --watch",
+		"check-types": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@repo/typescript-config": "workspace:*",
+		"@types/node": "^22.15.3",
+		"tsup": "^8.0.1",
+		"typescript": "5.9.2"
+	},
+	"peerDependencies": {
+		"@perceo/perceo": "0.x"
+	}
+}

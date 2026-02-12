@@ -1,9 +1,18 @@
 {
-  "name": "@repo/typescript-config",
-  "version": "0.0.0",
-  "private": true,
-  "license": "MIT",
-  "publishConfig": {
-    "access": "public"
-  }
+	"name": "@repo/typescript-config",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Shared TypeScript config presets for the Perceo monorepo.",
+	"keywords": [
+		"typescript",
+		"tsconfig",
+		"monorepo"
+	],
+	"files": [
+		"*.json"
+	],
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
+	}
 }
