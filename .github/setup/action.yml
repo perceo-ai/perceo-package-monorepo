@@ -1,0 +1,33 @@
+name: "Setup"
+description: "Sets up Node.js and runs install"
+
+runs:
+    using: composite
+    steps:
+        - name: Setup Node.js environment
+          uses: actions/setup-node@v3
+          with:
+              node-version: 20
+              cache: "pnpm"
+              registry-url: "https://registry.npmjs.org"
+
+        - name: Install pnpm
+          uses: pnpm/action-setup@v4
+          continue-on-error: true
+
+        - name: Setup Git User
+          shell: bash
+          run: |
+              git config --global user.email "pranav.kannepalli@gmail.com"
+              git config --global user.name "Pranav Kannepalli"
+
+        - name: Install dependencies
+          shell: bash
+          run: pnpm install --prefer-offline
+
+        - name: Setup Turbo
+          uses: dtinth/setup-github-actions-caching-for-turbo@v1
+          continue-on-error: true
+          with:
+              # Set the prefix for the cache keys.
+              cache-prefix: pranavkannepalli_
