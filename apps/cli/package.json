@@ -25,7 +25,7 @@
 	"type": "module",
 	"main": "./dist/index.js",
 	"bin": {
-		"perceo": "dist/index.js"
+		"perceo": "./dist/index.js"
 	},
 	"files": [
 		"dist"
@@ -51,6 +51,7 @@
 		"node": ">=18"
 	},
 	"publishConfig": {
-		"access": "public"
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
 	}
 }
