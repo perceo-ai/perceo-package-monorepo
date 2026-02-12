@@ -10,20 +10,44 @@ permissions:
     packages: write
 
 jobs:
-    release:
+    prepare:
+        name: Prepare
         runs-on: ubuntu-latest
-
         steps:
             - uses: actions/checkout@v4
+
+            - uses: pnpm/action-setup@v4
+              with:
+                  version: 9
 
             - uses: actions/setup-node@v4
               with:
                   node-version: 20
                   registry-url: https://registry.npmjs.org
+                  cache: pnpm
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+    releaseCli:
+        name: Release CLI
+        runs-on: ubuntu-latest
+        needs: prepare
+        steps:
+            - uses: actions/checkout@v4
 
             - uses: pnpm/action-setup@v4
               with:
-                  run_install: true
+                  version: 9
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+                  registry-url: https://registry.npmjs.org
+                  cache: pnpm
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
 
             - name: Build CLI
               run: pnpm build --filter ./apps/cli
