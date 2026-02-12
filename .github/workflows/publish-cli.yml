@@ -12,7 +12,9 @@ on:
             - ".changeset/**"
             - "packages/**"
 
+# Trusted publishing (OIDC): add this workflow on npm as Trusted Publisher with filename "publish-cli.yml"
 permissions:
+    id-token: write # Required for npm OIDC trusted publishing
     contents: write
     packages: write
 
@@ -27,12 +29,8 @@ jobs:
             - name: Setup
               uses: ./.github/setup
 
-            - name: Configure npm for publish
-              run: |
-                  echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" >> .npmrc
-                  echo "access=public" >> .npmrc
-              env:
-                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+            - name: Configure npm access
+              run: echo "access=public" >> .npmrc
 
             - name: Build CLI
               run: pnpm build --filter ./apps/cli
@@ -45,6 +43,4 @@ jobs:
                   commit: "ci(changesets): version packages"
                   setupGitUser: false
               env:
-                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
