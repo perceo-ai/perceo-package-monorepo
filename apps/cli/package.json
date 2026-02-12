@@ -1,0 +1,52 @@
+{
+  "name": "@perceo/perceo",
+  "version": "0.1.1",
+  "description": "Intelligent regression testing through multi-agent simulation",
+  "type": "module",
+  "bin": {
+    "perceo": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts --format esm --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "testing",
+    "automation",
+    "ai",
+    "regression-testing",
+    "playwright",
+    "qa",
+    "multi-agent"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/perceo/perceo.git",
+    "directory": "apps/cli"
+  },
+  "homepage": "https://perceo.dev",
+  "author": "Perceo Team",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.0.0",
+    "chalk": "^5.3.0",
+    "ora": "^8.0.1"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^20.11.0",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3"
+  }
+}
