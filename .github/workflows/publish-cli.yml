@@ -24,11 +24,11 @@ jobs:
             - name: Checkout
               uses: actions/checkout@v4
 
-            - name: Install dependencies
-              run: pnpm install --frozen-lockfile
-
             - name: Setup
               uses: ./.github/setup
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
 
             - name: Configure npm for publish
               run: |
