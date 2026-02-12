@@ -27,9 +27,6 @@ jobs:
             - name: Setup
               uses: ./.github/setup
 
-            - name: Install dependencies
-              run: pnpm install --frozen-lockfile
-
             - name: Configure npm for publish
               run: |
                   echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" >> .npmrc

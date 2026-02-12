@@ -2,22 +2,6 @@
   "name": "@perceo/perceo",
   "version": "0.1.1",
   "description": "Intelligent regression testing through multi-agent simulation",
-  "type": "module",
-  "bin": {
-    "perceo": "./dist/index.js"
-  },
-  "main": "./dist/index.js",
-  "files": [
-    "dist"
-  ],
-  "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean",
-    "dev": "tsup src/index.ts --format esm --watch",
-    "typecheck": "tsc --noEmit"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": [
     "testing",
     "automation",
@@ -27,17 +11,30 @@
     "qa",
     "multi-agent"
   ],
-  "engines": {
-    "node": ">=18"
+  "homepage": "https://perceo.dev",
+  "bugs": {
+    "url": "https://github.com/perceo/perceo/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/perceo/perceo.git",
+    "url": "git+https://github.com/perceo/perceo.git",
     "directory": "apps/cli"
   },
-  "homepage": "https://perceo.dev",
-  "author": "Perceo Team",
   "license": "MIT",
+  "author": "Perceo Team",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "perceo": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts --format esm --watch",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
@@ -49,5 +46,11 @@
     "@types/node": "^20.11.0",
     "tsup": "^8.0.1",
     "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
