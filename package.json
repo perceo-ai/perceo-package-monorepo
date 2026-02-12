@@ -9,7 +9,8 @@
     "check-types": "turbo run check-types",
     "cli:dev": "pnpm --filter @perceo/perceo dev",
     "cli:build": "pnpm --filter @perceo/perceo build",
-    "cli:test": "node apps/cli/dist/index.js"
+    "cli:test": "node apps/cli/dist/index.js",
+    "changeset": "changeset"
   },
   "devDependencies": {
     "prettier": "^3.7.4",
