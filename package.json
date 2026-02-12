@@ -13,6 +13,7 @@
 		"changeset": "changeset"
 	},
 	"devDependencies": {
+		"@changesets/cli": "^2.29.8",
 		"prettier": "^3.7.4",
 		"turbo": "^2.8.7",
 		"typescript": "5.9.2"
