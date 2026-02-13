@@ -4,6 +4,7 @@ import ora from "ora";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { loadConfig } from "../config.js";
+import { isLoggedIn } from "../auth.js";
 import { ObserverEngine, type ObserverEngineConfig } from "@perceo/observer-engine";
 
 type InitOptions = {
@@ -24,6 +25,21 @@ export const initCommand = new Command("init")
 	.option("-d, --dir <directory>", "Project directory", process.cwd())
 	.action(async (options: InitOptions) => {
 		const projectDir = path.resolve(options.dir || process.cwd());
+
+		const loggedIn = await isLoggedIn(projectDir);
+		if (!loggedIn) {
+			console.error(
+				chalk.red("You must log in first. Run ") +
+					chalk.cyan("perceo login") +
+					chalk.red(" (or ") +
+					chalk.cyan("perceo login --scope global") +
+					chalk.red("), then run ") +
+					chalk.cyan("perceo init") +
+					chalk.red(" again."),
+			);
+			process.exit(1);
+		}
+
 		const spinner = ora(`Initializing Perceo in ${chalk.cyan(projectDir)}...`).start();
 
 		try {
@@ -91,7 +107,7 @@ export const initCommand = new Command("init")
 			console.log("  1. Review and customize " + chalk.cyan(`.perceo/${CONFIG_FILE}`) + " for your project.");
 			console.log("  2. Set up local managed services (Neo4j, Supabase) as described in " + chalk.cyan(".perceo/README.md") + ".");
 			console.log("  3. Start the watcher with: " + chalk.cyan("perceo watch --dev --analyze"));
-			console.log("\n" + chalk.gray("For full architecture and managed services guides, see docs/cli_architecture.md."));
+			console.log("\n" + chalk.gray("For full architecture and managed services guides, see docs/cli_architecture.md. You are logged in; use perceo logout to sign out."));
 		} catch (error) {
 			spinner.fail("Failed to initialize Perceo");
 			console.error(chalk.red(error instanceof Error ? error.message : "Unknown error"));
@@ -184,8 +200,9 @@ function createDefaultConfig(projectName: string, framework: string) {
 			},
 		},
 		analytics: {
+			// Provider + behavior only; credentials and endpoints are injected via environment
+			// variables at build/run time and MUST NOT live in this project config.
 			provider: "ga4",
-			credentials: "${ANALYTICS_CREDENTIALS}",
 			syncInterval: 300,
 			correlation: {
 				algorithm: "smith-waterman",
@@ -196,14 +213,11 @@ function createDefaultConfig(projectName: string, framework: string) {
 				avgOrderValueSource: "analytics",
 			},
 		},
-		flowGraph: {
-			endpoint: "bolt://localhost:7687",
-			database: "Perceo",
-		},
-		eventBus: {
-			type: "in-memory",
-			redisUrl: "redis://localhost:6379",
-		},
+		// Connection details for databases, event buses, and managed APIs are intentionally
+		// omitted from this file so that clients never see internal endpoints or API keys.
+		// The CLI and backend resolve them from environment variables or your managed platform.
+		flowGraph: {},
+		eventBus: { type: "managed" },
 		notifications: {
 			slack: {
 				enabled: false,

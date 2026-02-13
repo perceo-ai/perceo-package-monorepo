@@ -1,0 +1,30 @@
+{
+	"name": "@perceo/temporal-worker",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Temporal worker for Perceo observer engine workflows",
+	"main": "dist/index.js",
+	"scripts": {
+		"build": "tsc",
+		"dev": "tsc --watch",
+		"start": "node dist/index.js",
+		"test": "jest"
+	},
+	"dependencies": {
+		"@temporalio/worker": "^1.11.5",
+		"@temporalio/workflow": "^1.11.5",
+		"@temporalio/activity": "^1.11.5",
+		"@temporalio/client": "^1.11.5",
+		"@perceo/observer-engine": "workspace:*",
+		"redis": "^4.7.0",
+		"node-fetch": "^3.3.2"
+	},
+	"devDependencies": {
+		"@temporalio/testing": "^1.11.5",
+		"@types/node": "^20.11.0",
+		"@repo/typescript-config": "workspace:*",
+		"typescript": "^5.3.3",
+		"jest": "^29.7.0",
+		"@types/jest": "^29.5.12"
+	}
+}

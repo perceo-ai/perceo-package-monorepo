@@ -1,27 +1,30 @@
 # Perceo Unified CLI Architecture
 
-**Version:** 1.0  
-**Date:** February 11, 2026  
-**Status:** Integration Specification
+**Version:** 2.0  
+**Date:** February 12, 2026  
+**Status:** Simplified Production Spec
 
 ---
 
 ## Executive Summary
 
-This document defines how the Observer Engine, Analyzer Engine, and Analytics Correlation Engine integrate into a single, cohesive Perceo CLI. The architecture ensures seamless data flow between components while maintaining clear separation of concerns and enabling independent development/deployment.
+This document defines how the Observer Engine, Analyzer Engine, and Analytics Correlation Engine integrate into a single, cohesive Perceo CLI using **only three managed services**: Vercel, Supabase, and Temporal Cloud.
 
-**Core Integration Principle:** Each engine operates as an independent module with well-defined interfaces, orchestrated through a central event bus and unified CLI command structure.
+**Core Integration Principle:** Each engine operates as an independent module with well-defined interfaces, orchestrated through Supabase Realtime and unified CLI command structure.
+
+**Infrastructure Philosophy:** Maximize managed services, minimize operational complexity, ship fast.
 
 ---
 
-## System Architecture Overview
+## Simplified System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                        Perceo CLI (Unified Interface)                 │
+│                    Perceo CLI (Unified Interface)                       │
+│                         @perceo/perceo (npm)                            │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
-│  Perceo [command] [subcommand] [options]                             │
+│  perceo [command] [subcommand] [options]                                │
 │                                                                          │
 │  ├─ init          Initialize project                                    │
 │  ├─ watch         Start development mode (Observer → Coordinator)       │
@@ -36,1385 +39,1258 @@ This document defines how the Observer Engine, Analyzer Engine, and Analytics Co
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         Central Event Bus (Redis/In-Memory)              │
-│  - Pub/Sub for real-time events                                         │
-│  - Event replay for debugging                                           │
-│  - Cross-engine communication                                           │
+│                    Vercel (Next.js App + API Routes)                    │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  Dashboard UI                    API Routes                      │   │
+│  │  - Flow visualization            - /api/observer/analyze         │   │
+│  │  - Real-time metrics             - /api/analyzer/insights        │   │
+│  │  - Analytics correlation         - /api/analytics/sync           │   │
+│  │  - Test results                  - /api/flows/*                  │   │
+│  │  - Insights feed                 - /api/webhooks/*               │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────┬──────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Supabase (All Data + Realtime)                  │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  PostgreSQL Database                                             │   │
+│  │  ├─ flows                    (flow definitions + graph data)     │   │
+│  │  ├─ steps                    (flow steps as rows)                │   │
+│  │  ├─ personas                 (user personas)                     │   │
+│  │  ├─ test_runs                (test execution results)            │   │
+│  │  ├─ analytics_events         (production events, partitioned)    │   │
+│  │  ├─ insights                 (analyzer output)                   │   │
+│  │  ├─ predictions              (failure predictions)               │   │
+│  │  └─ flow_metrics             (synthetic + production metrics)    │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  Supabase Realtime (Event Bus Replacement)                       │   │
+│  │  - Postgres CDC → Real-time subscriptions                        │   │
+│  │  - Broadcast for ephemeral events                                │   │
+│  │  - Presence for agent coordination                               │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  Supabase Storage                                                 │   │
+│  │  - screenshots/              (agent screenshots)                 │   │
+│  │  - videos/                   (test recordings)                   │   │
+│  │  - reports/                  (generated reports)                 │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  Supabase Auth                                                    │   │
+│  │  - User authentication                                            │   │
+│  │  - Project-level access control                                  │   │
+│  │  - API key management                                             │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────┬──────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Temporal Cloud (Orchestration Only)                  │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  Coordinator Workflows                                            │   │
+│  │  - Test execution orchestration                                   │   │
+│  │  - Multi-agent coordination                                       │   │
+│  │  - Retry logic & error handling                                   │   │
+│  │  - Long-running analytics jobs                                    │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  Worker Pool (Vercel Serverless Functions)                        │   │
+│  │  - Playwright browser automation                                  │   │
+│  │  - Computer use agents                                            │   │
+│  │  - Screenshot capture                                             │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────┘
-          │                         │                         │
-          ▼                         ▼                         ▼
-┌──────────────────┐   ┌──────────────────┐   ┌──────────────────────┐
-│ Observer Engine  │   │ Analyzer Engine  │   │ Analytics Engine     │
-│                  │   │                  │   │                      │
-│ - File Monitor   │   │ - Flow Analysis  │   │ - Data Ingestion     │
-│ - Change Detect  │   │ - UX Insights    │   │ - Sequence Alignment │
-│ - Pattern Match  │   │ - Coverage Gaps  │   │ - Correlation Logic  │
-│ - LLM Classify   │   │ - Predictions    │   │ - Anomaly Detection  │
-│ - Impact Analyze │   │ - Root Cause     │   │ - Revenue Impact     │
-└────────┬─────────┘   └────────┬─────────┘   └──────────┬───────────┘
-         │                      │                         │
-         └──────────────────────┼─────────────────────────┘
-                                ▼
-                   ┌─────────────────────────┐
-                   │   Flow Graph Database   │
-                   │       (Neo4j)           │
-                   │                         │
-                   │ - Flows & Steps         │
-                   │ - Personas              │
-                   │ - Test Results          │
-                   │ - Production Metrics    │
-                   │ - Analysis Insights     │
-                   └────────┬────────────────┘
-                            │
-                            ▼
-                   ┌─────────────────────────┐
-                   │  Coordinator Agent      │
-                   │  (Temporal Workflows)   │
-                   │                         │
-                   │ - Test Orchestration    │
-                   │ - Agent Swarm Mgmt      │
-                   │ - Results Collection    │
-                   └─────────────────────────┘
 ```
+
+---
+
+## Three-Service Architecture
+
+### 1. **Vercel** - Frontend + API Layer
+
+**What it handles:**
+
+- Next.js dashboard (UI)
+- API routes for all engine operations
+- Webhook receivers (GitHub, analytics providers)
+- Temporal workers (serverless functions)
+
+**Key API routes:**
+
+```
+/api/observer/analyze      → POST (analyze code changes)
+/api/analyzer/insights     → GET  (fetch insights)
+/api/analytics/sync        → POST (trigger sync)
+/api/flows/[id]            → GET/PUT/DELETE
+/api/webhooks/github       → POST (PR events)
+/api/webhooks/analytics    → POST (GA4, Mixpanel)
+```
+
+**Why Vercel:**
+
+- Zero-config deployments
+- Serverless functions for Temporal workers
+- Built-in CDN and edge network
+- Automatic preview deployments for PRs
+
+---
+
+### 2. **Supabase** - All Data + Event Bus
+
+**What it handles:**
+
+- PostgreSQL database (all persistent data)
+- Realtime subscriptions (replaces Redis event bus)
+- Storage (screenshots, videos, reports)
+- Auth (user + project access control)
+
+#### Database Schema (PostgreSQL)
+
+```sql
+-- Personas
+CREATE TABLE personas (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id uuid NOT NULL,
+  name text NOT NULL,
+  description text,
+  behaviors jsonb,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Flows (graph representation as relational + JSONB)
+CREATE TABLE flows (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id uuid NOT NULL,
+  persona_id uuid REFERENCES personas(id),
+  name text NOT NULL,
+  description text,
+  priority text CHECK (priority IN ('critical', 'high', 'medium', 'low')),
+
+  -- Graph structure (simple for now)
+  graph_data jsonb, -- Store complex graph relationships if needed
+
+  -- Observer data
+  affected_by_changes text[],
+  risk_score float,
+
+  -- Analyzer data
+  coverage_score float,
+
+  -- Metadata
+  created_at timestamptz DEFAULT now(),
+  last_modified timestamptz DEFAULT now(),
+
+  UNIQUE(project_id, name)
+);
+
+-- Steps (ordered sequence per flow)
+CREATE TABLE steps (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  flow_id uuid REFERENCES flows(id) ON DELETE CASCADE,
+  sequence_order int NOT NULL,
+  name text NOT NULL,
+  actions jsonb, -- [{type: 'click', target: '...'}]
+  expected_state jsonb,
+  timeout_ms int DEFAULT 5000,
+  next_step_id uuid REFERENCES steps(id),
+
+  UNIQUE(flow_id, sequence_order)
+);
+
+CREATE INDEX idx_steps_flow_order ON steps(flow_id, sequence_order);
+
+-- Flow Metrics (synthetic + production)
+CREATE TABLE flow_metrics (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  flow_id uuid REFERENCES flows(id) ON DELETE CASCADE,
+
+  -- Synthetic metrics (from tests)
+  synthetic_success_rate float,
+  synthetic_avg_duration_ms int,
+  synthetic_last_run timestamptz,
+  synthetic_run_count int DEFAULT 0,
+
+  -- Production metrics (from analytics)
+  prod_success_rate float,
+  prod_daily_users int,
+  prod_avg_duration_ms int,
+  prod_top_exit_step text,
+  prod_device_breakdown jsonb,
+  prod_cohort_performance jsonb,
+  prod_last_updated timestamptz,
+
+  updated_at timestamptz DEFAULT now(),
+
+  UNIQUE(flow_id)
+);
+
+-- Test Runs
+CREATE TABLE test_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  flow_id uuid REFERENCES flows(id),
+  status text CHECK (status IN ('pending', 'running', 'passed', 'failed', 'error')),
+  duration_ms int,
+  error_message text,
+  screenshots jsonb, -- Array of storage URLs
+  video_url text,
+  logs jsonb,
+
+  -- Context
+  triggered_by text, -- 'pr', 'watch', 'manual'
+  pr_number int,
+  commit_sha text,
+
+  created_at timestamptz DEFAULT now(),
+  completed_at timestamptz
+);
+
+CREATE INDEX idx_test_runs_flow ON test_runs(flow_id, created_at DESC);
+
+-- Analytics Events (time-series, partitioned by month)
+CREATE TABLE analytics_events (
+  id uuid DEFAULT gen_random_uuid(),
+  project_id uuid NOT NULL,
+
+  event_type text NOT NULL,
+  user_id text,
+  session_id text,
+
+  -- Flow matching
+  flow_id uuid REFERENCES flows(id),
+  flow_step text,
+  flow_confidence float,
+
+  -- Event data
+  url text,
+  metadata jsonb,
+  device_type text,
+  browser text,
+
+  created_at timestamptz DEFAULT now(),
+
+  PRIMARY KEY (id, created_at)
+) PARTITION BY RANGE (created_at);
+
+-- Create monthly partitions
+CREATE TABLE analytics_events_2026_02 PARTITION OF analytics_events
+  FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');
+
+CREATE INDEX idx_analytics_events_flow ON analytics_events(flow_id, created_at);
+CREATE INDEX idx_analytics_events_session ON analytics_events(session_id, created_at);
+
+-- Insights (from Analyzer)
+CREATE TABLE insights (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  flow_id uuid REFERENCES flows(id),
+  type text CHECK (type IN ('discrepancy', 'coverage-gap', 'ux-issue', 'prediction')),
+  severity text CHECK (severity IN ('critical', 'high', 'medium', 'low')),
+  message text NOT NULL,
+  suggested_action text,
+
+  -- Revenue impact estimation
+  revenue_impact jsonb,
+
+  -- Status
+  status text DEFAULT 'open' CHECK (status IN ('open', 'acknowledged', 'resolved', 'dismissed')),
+
+  created_at timestamptz DEFAULT now(),
+  resolved_at timestamptz
+);
+
+CREATE INDEX idx_insights_flow ON insights(flow_id, created_at DESC);
+CREATE INDEX idx_insights_status ON insights(status, severity);
+
+-- Predictions (from Analyzer ML model)
+CREATE TABLE predictions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  flow_id uuid REFERENCES flows(id),
+  pr_number int,
+  commit_sha text,
+
+  probability float NOT NULL, -- 0-1
+  confidence float NOT NULL, -- 0-1
+  reasoning text,
+  based_on text CHECK (based_on IN ('ml-model', 'heuristic', 'pattern')),
+
+  -- Outcome (filled in after test runs)
+  actual_result text CHECK (actual_result IN ('passed', 'failed', 'error')),
+
+  created_at timestamptz DEFAULT now(),
+  validated_at timestamptz
+);
+
+CREATE INDEX idx_predictions_flow ON predictions(flow_id, created_at DESC);
+
+-- Projects (multi-tenancy)
+CREATE TABLE projects (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  framework text, -- 'nextjs', 'react', 'vue', etc.
+
+  -- Config
+  config jsonb,
+
+  created_at timestamptz DEFAULT now(),
+
+  UNIQUE(name)
+);
+
+-- Project members (via Supabase Auth)
+CREATE TABLE project_members (
+  project_id uuid REFERENCES projects(id),
+  user_id uuid REFERENCES auth.users(id),
+  role text CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
+
+  PRIMARY KEY (project_id, user_id)
+);
+```
+
+#### Realtime Event Bus (Supabase Realtime)
+
+**Replace Redis pub/sub with Supabase Realtime:**
+
+```typescript
+// Event publishing via Postgres INSERT + CDC
+await supabase.from('events').insert({
+  type: 'flows.affected',
+  payload: {
+    changeId: 'abc123',
+    flows: [...]
+  }
+});
+
+// Event subscription via Realtime
+supabase
+  .channel('perceo-events')
+  .on('postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'events' },
+    (payload) => {
+      handleEvent(payload.new);
+    }
+  )
+  .subscribe();
+
+// Broadcast for ephemeral events (no persistence needed)
+supabase.channel('test-progress')
+  .on('broadcast', { event: 'test-update' }, (payload) => {
+    updateProgress(payload);
+  })
+  .subscribe();
+```
+
+**Why Supabase Realtime:**
+
+- Built-in with Supabase (no separate service)
+- Postgres CDC for persistent events
+- Broadcast channels for ephemeral messages
+- Presence for agent coordination
+- WebSocket + REST fallback
+
+---
+
+### 3. **Temporal Cloud** - Orchestration Only
+
+**What it handles:**
+
+- Test execution workflows
+- Multi-agent coordination
+- Retry logic and error handling
+- Long-running analytics jobs
+
+**Temporal Workflows:**
+
+```typescript
+// Coordinator workflow
+@WorkflowMethod
+async function runFlowTests(request: TestRequest): Promise<TestResult[]> {
+  const flows = request.affectedFlows;
+
+  // Parallel execution
+  const results = await Promise.all(
+    flows.map(flow =>
+      executeChild(runSingleFlowTest, {
+        args: [flow],
+        taskQueue: 'perceo-agents'
+      })
+    )
+  );
+
+  return results;
+}
+
+// Single flow test workflow
+@WorkflowMethod
+async function runSingleFlowTest(flow: Flow): Promise<TestResult> {
+  const agentId = generateId();
+
+  // Activity: Spawn browser agent
+  const agent = await activities.spawnAgent({
+    flowId: flow.id,
+    agentId
+  });
+
+  // Activity: Execute steps
+  for (const step of flow.steps) {
+    await activities.executeStep({
+      agentId,
+      step,
+      retries: 3
+    });
+  }
+
+  // Activity: Collect results
+  const result = await activities.collectResults({ agentId });
+
+  // Activity: Store in Supabase
+  await activities.storeTestResult({
+    flowId: flow.id,
+    result
+  });
+
+  return result;
+}
+```
+
+**Temporal Workers (Vercel Serverless Functions):**
+
+```typescript
+// api/temporal/worker.ts
+import { Worker } from "@temporalio/worker";
+import { Connection } from "@temporalio/client";
+
+const connection = await Connection.connect({
+	address: process.env.TEMPORAL_ADDRESS,
+	tls: true,
+});
+
+const worker = await Worker.create({
+	connection,
+	namespace: "perceo-production",
+	taskQueue: "perceo-agents",
+	workflowsPath: require.resolve("./workflows"),
+	activities: {
+		spawnAgent: async (args) => {
+			// Launch Playwright in serverless function
+			const browser = await playwright.chromium.launch();
+			// ... agent logic
+		},
+		executeStep: async (args) => {
+			// Computer use / browser automation
+		},
+		storeTestResult: async (args) => {
+			// Write to Supabase
+			await supabase.from("test_runs").insert(args.result);
+		},
+	},
+});
+
+await worker.run();
+```
+
+**Why Temporal:**
+
+- Handles complex orchestration (retries, timeouts, long-running)
+- Durable execution (survives crashes)
+- Workers run as Vercel serverless functions (no separate infrastructure)
+- Built-in observability and debugging
 
 ---
 
 ## Data Flow Between Engines
 
-### Flow 1: Code Change → Test Execution (Observer → Coordinator)
+### Flow 1: Code Change → Test Execution
 
 ```
-Developer saves file
+Developer saves file (local) or opens PR (GitHub)
          │
          ▼
-┌────────────────────┐
-│ Observer Engine    │
-│ - Detect change    │
-│ - Analyze diff     │
-│ - Pattern match    │
-│ - LLM classify     │
-└────────┬───────────┘
+┌────────────────────────────────────────────────────────┐
+│ Observer Engine (CLI or Webhook)                       │
+│ - Detect change via git diff                           │
+│ - Analyze with LLM (Claude API)                        │
+│ - Pattern match against flows (Supabase query)         │
+└────────┬───────────────────────────────────────────────┘
          │
-         ▼ (publishes event)
-┌────────────────────────────────┐
-│ Event: "flows.affected"        │
-│ {                              │
-│   changeId: "abc123",          │
-│   flows: [                     │
-│     {                          │
-│       name: "Purchase Product",│
-│       confidence: 0.92,        │
-│       riskScore: 0.87,         │
-│       priority: "high"         │
-│     }                          │
-│   ],                           │
-│   changes: [...],              │
-│   timestamp: ...               │
-│ }                              │
-└────────┬───────────────────────┘
+         ▼ (Supabase INSERT)
+┌────────────────────────────────────────────────────────┐
+│ Supabase: flows table updated                          │
+│ - affected_by_changes += [changeId]                    │
+│ - risk_score = 0.87                                    │
+└────────┬───────────────────────────────────────────────┘
          │
-         ▼ (coordinator subscribes)
-┌────────────────────┐
-│ Coordinator Agent  │
-│ - Receive event    │
-│ - Plan execution   │
-│ - Spawn agents     │
-│ - Run tests        │
-└────────┬───────────┘
+         ▼ (Realtime CDC event)
+┌────────────────────────────────────────────────────────┐
+│ Dashboard (subscribed to flows changes)                │
+│ - Shows affected flows in real-time                    │
+└────────────────────────────────────────────────────────┘
          │
-         ▼ (publishes results)
-┌────────────────────────────────┐
-│ Event: "tests.completed"       │
-│ {                              │
-│   changeId: "abc123",          │
-│   results: [...],              │
-│   passed: 4,                   │
-│   failed: 1,                   │
-│   duration: 45200              │
-│ }                              │
-└────────┬───────────────────────┘
+         ▼ (API call to Temporal)
+┌────────────────────────────────────────────────────────┐
+│ Temporal Workflow: runFlowTests()                      │
+│ - Coordinator spawns agents                            │
+│ - Parallel execution                                   │
+└────────┬───────────────────────────────────────────────┘
          │
-         ├──────────────┬──────────────────┐
-         ▼              ▼                  ▼
-  [Analyzer]      [Analytics]        [Dashboard]
-  (subscribes)    (subscribes)       (subscribes)
+         ▼ (Activities → Supabase)
+┌────────────────────────────────────────────────────────┐
+│ Supabase: test_runs table                              │
+│ - INSERT results                                       │
+│ - Storage: screenshots, videos                         │
+└────────┬───────────────────────────────────────────────┘
+         │
+         ▼ (Realtime CDC event)
+┌────────────────────────────────────────────────────────┐
+│ Dashboard + CLI (subscribed)                           │
+│ - Display results in real-time                         │
+│ - Post comment to GitHub PR                            │
+└────────────────────────────────────────────────────────┘
 ```
 
-### Flow 2: Production Data → Flow Insights (Analytics → Analyzer → Observer)
+### Flow 2: Production Analytics → Insights
 
 ```
 Production Analytics (GA4, Mixpanel, etc.)
          │
-         ▼ (webhook/polling)
-┌────────────────────┐
-│ Analytics Engine   │
-│ - Ingest events    │
-│ - Match to flows   │
-│ - Calculate metrics│
-└────────┬───────────┘
+         ▼ (Webhook to Vercel)
+┌────────────────────────────────────────────────────────┐
+│ API Route: /api/webhooks/analytics                     │
+│ - Receive event payload                                │
+│ - Match to flows (sequence alignment)                  │
+└────────┬───────────────────────────────────────────────┘
          │
-         ▼ (writes to graph)
-┌────────────────────────────────┐
-│ Flow Graph DB Update           │
-│ flow.productionMetrics = {     │
-│   successRate: 0.67,           │
-│   dailyUsers: 2847,            │
-│   topExitStep: "add-to-cart",  │
-│   deviceBreakdown: {...}       │
-│ }                              │
-└────────┬───────────────────────┘
+         ▼ (Supabase INSERT)
+┌────────────────────────────────────────────────────────┐
+│ Supabase: analytics_events table                       │
+│ - Store event with flow_id match                       │
+│ - Partitioned by month                                 │
+└────────┬───────────────────────────────────────────────┘
          │
-         ▼ (triggers analysis)
-┌────────────────────┐
-│ Analyzer Engine    │
-│ - Detect discrepancy│
-│ - Compare synthetic│
-│   vs production    │
-│ - Generate insight │
-└────────┬───────────┘
+         ▼ (Scheduled job via Vercel Cron)
+┌────────────────────────────────────────────────────────┐
+│ Analyzer Engine (Vercel API route)                     │
+│ - Aggregate analytics_events                           │
+│ - Calculate prod metrics                               │
+│ - Compare synthetic vs production                      │
+└────────┬───────────────────────────────────────────────┘
          │
-         ▼ (publishes event)
-┌────────────────────────────────┐
-│ Event: "insights.new"          │
-│ {                              │
-│   type: "discrepancy",         │
-│   severity: "medium",          │
-│   flow: "Purchase Product",    │
-│   message: "27pt gap between   │
-│     synthetic (94%) and real   │
-│     (67%) success rates",      │
-│   suggestedAction: "Add mobile │
-│     test scenario"             │
-│ }                              │
-└────────┬───────────────────────┘
+         ▼ (Supabase UPDATE + INSERT)
+┌────────────────────────────────────────────────────────┐
+│ Supabase Updates:                                      │
+│ - flow_metrics.prod_* fields updated                   │
+│ - insights table: INSERT new discrepancy               │
+└────────┬───────────────────────────────────────────────┘
          │
-         ├──────────────┬──────────────────┐
-         ▼              ▼                  ▼
-  [Dashboard]      [Observer]         [Developer]
-  (displays)       (suggests flow)    (notification)
-```
-
-### Flow 3: Analyzer Insights → Observer Pattern Updates (Feedback Loop)
-
-```
-┌────────────────────┐
-│ Analyzer Engine    │
-│ - Detects new      │
-│   pattern:         │
-│   "Quick Reorder"  │
-│   (376 users/week) │
-└────────┬───────────┘
-         │
-         ▼ (publishes event)
-┌────────────────────────────────┐
-│ Event: "flows.discovered"      │
-│ {                              │
-│   flowName: "Quick Reorder",   │
-│   confidence: 0.78,            │
-│   basedOn: "production-data",  │
-│   pattern: [...steps...],      │
-│   usage: {                     │
-│     weeklyUsers: 376,          │
-│     avgDuration: "12s"         │
-│   }                            │
-│ }                              │
-└────────┬───────────────────────┘
-         │
-         ▼ (observer subscribes)
-┌────────────────────┐
-│ Observer Engine    │
-│ - Adds pattern to  │
-│   matcher library  │
-│ - Now watches for  │
-│   related code     │
-│   changes          │
-└────────────────────┘
-         │
-         ▼ (next code change)
-┌────────────────────────────────┐
-│ Developer modifies quick-      │
-│ reorder button                 │
-│         │                      │
-│         ▼                      │
-│ Observer detects & matches     │
-│ "Quick Reorder" pattern        │
-│ (confidence: 0.91)             │
-└────────────────────────────────┘
+         ▼ (Realtime CDC event)
+┌────────────────────────────────────────────────────────┐
+│ Dashboard (subscribed)                                 │
+│ - Alert: "27pt gap in Purchase flow"                  │
+│ - Developer clicks → detailed breakdown                │
+└────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Unified CLI Structure
 
-### Command Hierarchy
+### Core Commands
 
 ```bash
 perceo
-├── init                        # Interactive project setup (Firebase-style)
-│   # Detects framework when possible, then walks you through:
-│   # - Selecting framework/stack
-│   # - Choosing which Perceo features to enable (watch, ci, analytics, dashboard)
-│   # - Generating .perceo/config.json and minimal boilerplate
-│
-├── watch                       # Development mode (Observer-driven)
-│   ├── --dev                   # Local development (default)
-│   ├── --auto-test             # Run tests on changes
-│   └── --analyze               # Enable real-time analyzer insights
-│
-├── ci                          # CI mode (Observer-driven)
-│   ├── analyze                 # Analyze PR changes
-│   │   ├── --base <sha>
-│   │   ├── --head <sha>
-│   │   └── --with-insights     # Include analyzer predictions
+├── init                        # Interactive setup (Firebase-style)
+├── watch                       # Development mode
+│   ├── --dev                   # Local (default)
+│   ├── --auto-test             # Run tests on save
+│   └── --analyze               # Real-time insights
+├── ci                          # CI/PR mode
+│   ├── analyze                 # Analyze changes
 │   ├── test                    # Run affected flows
-│   │   ├── --flows-from <source>
-│   │   └── --parallel <n>
-│   └── report                  # Generate test report
-│       └── --format json|html
-│
-├── analyze                     # Analyzer Engine commands
-│   ├── insights                # Show current insights
-│   │   ├── --flow <name>       # For specific flow
-│   │   └── --severity <level>  # Filter by severity
-│   ├── coverage                # Coverage gap analysis
-│   ├── suggest                 # Suggest flow improvements
-│   └── predict                 # Predict failure likelihood
-│       └── --for-pr <number>
-│
-├── analytics                   # Analytics Engine commands
-│   ├── connect                 # Connect analytics source
-│   │   ├── --provider ga4|mixpanel|amplitude
-│   │   └── --credentials <path>
-│   ├── sync                    # Manual sync production data
-│   ├── correlate               # Run correlation analysis
-│   │   └── --flow <name>
-│   ├── gaps                    # Show untested flows from prod
-│   └── impact                  # Revenue impact estimation
-│       └── --flow <name>
-│
+│   └── report                  # Generate report
+├── analyze                     # Analyzer commands
+│   ├── insights                # Show insights
+│   ├── coverage                # Coverage gaps
+│   └── predict                 # Predict failures
+├── analytics                   # Analytics commands
+│   ├── connect                 # Connect provider
+│   ├── sync                    # Manual sync
+│   └── gaps                    # Untested flows
 ├── flows                       # Flow management
-│   ├── list                    # List all flows
-│   ├── show <name>             # Show flow details
-│   │   └── --with-metrics      # Include prod metrics
-│   ├── create                  # Create new flow
-│   ├── edit <name>             # Edit flow definition
-│   └── delete <name>           # Delete flow
-│
+│   ├── list
+│   ├── show <name>
+│   ├── create
+│   └── delete <name>
 ├── dashboard                   # Launch dashboard
-│   ├── --port <port>           # Local dashboard port
-│   └── --open                  # Auto-open browser
-│
 └── config                      # Configuration
-    ├── get <key>
-    ├── set <key> <value>
-    └── show                    # Show all config
 ```
 
-### Command Examples
-
-```bash
-# Setup (interactive, similar to `firebase init`)
-perceo init
-
-# Development workflow
-perceo watch --dev --analyze
-# → Starts Observer (file watching)
-# → Enables real-time Analyzer insights
-# → Runs tests on code changes
-
-# CI workflow
-perceo ci analyze --base main --head HEAD --with-insights
-# → Observer analyzes changes
-# → Analyzer predicts failure likelihood
-# → Outputs affected flows + risk scores
-
-perceo ci test --flows-from analyze --parallel 5
-# → Coordinator runs tests based on Observer's analysis
-# → Results feed back to Analyzer for learning
-
-# Analytics workflow
-perceo analytics connect --provider ga4
-# → Configure GA4 integration
-# → Start ingesting production data
-
-perceo analytics sync
-# → Manually trigger sync
-# → Analytics Engine fetches latest data
-# → Correlates with flow definitions
-
-perceo analytics gaps
-# → Analyzer + Analytics collaboration
-# → Show flows that exist in prod but not in tests
-
-# Insights workflow
-perceo analyze insights --severity high
-# → Show high-severity insights from Analyzer
-# → Includes discrepancies from Analytics Engine
-# → Suggests actions
-
-perceo analyze predict --for-pr 123
-# → Analyzer uses:
-#   - Observer's change analysis
-#   - Analytics' production metrics
-#   - Historical patterns
-# → Predicts failure probability
-
-# Combined workflow
-perceo watch --dev --analyze &
-perceo analytics sync &
-perceo dashboard --open
-# → All engines running
-# → Real-time insights in dashboard
-```
-
----
-
-## Event Bus Specification
-
-### Core Events
-
-```typescript
-// src/core/events.ts
-
-export enum EventType {
-	// Observer events
-	CHANGE_DETECTED = "observer.change.detected",
-	FLOWS_AFFECTED = "observer.flows.affected",
-	ANALYSIS_COMPLETE = "observer.analysis.complete",
-
-	// Coordinator events
-	TESTS_STARTED = "coordinator.tests.started",
-	TESTS_COMPLETED = "coordinator.tests.completed",
-	TEST_FAILED = "coordinator.test.failed",
-
-	// Analytics events
-	DATA_SYNCED = "analytics.data.synced",
-	METRICS_UPDATED = "analytics.metrics.updated",
-	CORRELATION_COMPLETE = "analytics.correlation.complete",
-
-	// Analyzer events
-	INSIGHT_GENERATED = "analyzer.insight.generated",
-	FLOW_DISCOVERED = "analyzer.flow.discovered",
-	PREDICTION_MADE = "analyzer.prediction.made",
-	ANOMALY_DETECTED = "analyzer.anomaly.detected",
-
-	// Flow Graph events
-	FLOW_CREATED = "graph.flow.created",
-	FLOW_UPDATED = "graph.flow.updated",
-	FLOW_DELETED = "graph.flow.deleted",
-}
-
-export interface PerceoEvent<T = any> {
-	id: string;
-	type: EventType;
-	timestamp: number;
-	source: "observer" | "coordinator" | "analytics" | "analyzer" | "graph";
-	data: T;
-	metadata?: {
-		userId?: string;
-		projectId?: string;
-		environment?: string;
-	};
-}
-```
-
-### Event Bus Implementation
-
-```typescript
-// src/core/event-bus.ts
-
-import { EventEmitter } from "events";
-import Redis from "ioredis";
-
-export class EventBus extends EventEmitter {
-	private redis?: Redis;
-	private subscriptions: Map<string, Set<EventHandler>> = new Map();
-
-	constructor(config: EventBusConfig) {
-		super();
-
-		if (config.useRedis) {
-			this.redis = new Redis(config.redisUrl);
-			this.setupRedisSubscriptions();
-		}
-	}
-
-	async publish<T>(event: PerceoEvent<T>): Promise<void> {
-		// Emit locally
-		this.emit(event.type, event);
-
-		// Publish to Redis for distributed systems
-		if (this.redis) {
-			await this.redis.publish("Perceo:events", JSON.stringify(event));
-		}
-
-		// Log for debugging
-		console.log(`[EventBus] Published: ${event.type}`, event.data);
-	}
-
-	subscribe<T>(eventType: EventType | EventType[], handler: EventHandler<T>): void {
-		const types = Array.isArray(eventType) ? eventType : [eventType];
-
-		for (const type of types) {
-			if (!this.subscriptions.has(type)) {
-				this.subscriptions.set(type, new Set());
-			}
-			this.subscriptions.get(type)!.add(handler);
-			this.on(type, handler);
-		}
-	}
-
-	unsubscribe<T>(eventType: EventType, handler: EventHandler<T>): void {
-		this.subscriptions.get(eventType)?.delete(handler);
-		this.off(eventType, handler);
-	}
-
-	private setupRedisSubscriptions(): void {
-		if (!this.redis) return;
-
-		const subscriber = this.redis.duplicate();
-		subscriber.subscribe("Perceo:events");
-
-		subscriber.on("message", (channel, message) => {
-			try {
-				const event = JSON.parse(message) as PerceoEvent;
-				this.emit(event.type, event);
-			} catch (error) {
-				console.error("Failed to parse event:", error);
-			}
-		});
-	}
-}
-
-interface EventBusConfig {
-	useRedis?: boolean;
-	redisUrl?: string;
-}
-
-type EventHandler<T = any> = (event: PerceoEvent<T>) => void | Promise<void>;
-```
-
----
-
-## Engine Integration Points
-
-### Observer Engine Exports
-
-```typescript
-// src/observer/index.ts
-
-export class ObserverEngine {
-	constructor(
-		private eventBus: EventBus,
-		private flowGraph: FlowGraphClient,
-		private config: ObserverConfig,
-	) {}
-
-	// Called by CLI: Perceo watch
-	async startWatch(): Promise<void> {
-		const monitor = new FileMonitor(this.config.watch);
-
-		monitor.on("change", async (change) => {
-			// Analyze change
-			const analysis = await this.analyzeChange(change);
-
-			// Publish event
-			await this.eventBus.publish({
-				id: generateId(),
-				type: EventType.FLOWS_AFFECTED,
-				timestamp: Date.now(),
-				source: "observer",
-				data: {
-					changeId: analysis.id,
-					flows: analysis.affectedFlows,
-					changes: analysis.changes,
-				},
-			});
-		});
-
-		await monitor.start();
-	}
-
-	// Called by CLI: Perceo ci analyze
-	async analyzeChanges(baseSha: string, headSha: string): Promise<ImpactReport> {
-		// Get diff
-		const diff = await this.getDiff(baseSha, headSha);
-
-		// Analyze
-		const analysis = await this.changeAnalyzer.analyze(diff);
-		const impacts = await this.impactAnalyzer.analyze(analysis);
-
-		// Publish event
-		await this.eventBus.publish({
-			id: generateId(),
-			type: EventType.ANALYSIS_COMPLETE,
-			timestamp: Date.now(),
-			source: "observer",
-			data: impacts,
-		});
-
-		return impacts;
-	}
-
-	// Subscribe to analyzer insights
-	subscribeToInsights(): void {
-		this.eventBus.subscribe(EventType.FLOW_DISCOVERED, async (event) => {
-			// Add newly discovered flow pattern to matcher
-			await this.patternMatcher.addPattern(event.data.pattern);
-		});
-	}
-}
-```
-
-### Analyzer Engine Exports
-
-```typescript
-// src/analyzer/index.ts
-
-export class AnalyzerEngine {
-	constructor(
-		private eventBus: EventBus,
-		private flowGraph: FlowGraphClient,
-		private config: AnalyzerConfig,
-	) {
-		this.subscribeToEvents();
-	}
-
-	// Called by CLI: Perceo analyze insights
-	async getInsights(filter?: InsightFilter): Promise<Insight[]> {
-		const flows = await this.flowGraph.getAllFlows();
-		const insights: Insight[] = [];
-
-		for (const flow of flows) {
-			// Flow completeness analysis
-			insights.push(...(await this.analyzeCompleteness(flow)));
-
-			// UX optimization analysis
-			insights.push(...(await this.analyzeUX(flow)));
-
-			// Coverage gap analysis
-			insights.push(...(await this.analyzeCoverage(flow)));
-		}
-
-		return this.filterAndRank(insights, filter);
-	}
-
-	// Called by CLI: Perceo analyze predict
-	async predictFailure(changes: ChangeAnalysis[]): Promise<Prediction[]> {
-		const flows = await this.flowGraph.getAllFlows();
-		const predictions: Prediction[] = [];
-
-		for (const flow of flows) {
-			const prediction = await this.mlModel.predict({
-				flow,
-				changes,
-				historicalData: await this.getHistoricalData(flow),
-				productionMetrics: flow.productionMetrics,
-			});
-
-			predictions.push(prediction);
-		}
-
-		return predictions.sort((a, b) => b.probability - a.probability);
-	}
-
-	// Subscribe to test results and production data
-	private subscribeToEvents(): void {
-		// Learn from test results
-		this.eventBus.subscribe(EventType.TESTS_COMPLETED, async (event) => {
-			await this.updateMLModel(event.data);
-		});
-
-		// Analyze production metrics
-		this.eventBus.subscribe(EventType.METRICS_UPDATED, async (event) => {
-			const insights = await this.analyzeProductionData(event.data);
-
-			// Publish insights
-			for (const insight of insights) {
-				await this.eventBus.publish({
-					id: generateId(),
-					type: EventType.INSIGHT_GENERATED,
-					timestamp: Date.now(),
-					source: "analyzer",
-					data: insight,
-				});
-			}
-		});
-
-		// Discover new flows from production
-		this.eventBus.subscribe(EventType.CORRELATION_COMPLETE, async (event) => {
-			const newFlows = await this.discoverFlows(event.data);
-
-			for (const flow of newFlows) {
-				await this.eventBus.publish({
-					id: generateId(),
-					type: EventType.FLOW_DISCOVERED,
-					timestamp: Date.now(),
-					source: "analyzer",
-					data: flow,
-				});
-			}
-		});
-	}
-
-	// Detect discrepancies between synthetic and real
-	private async analyzeProductionData(data: ProductionMetrics): Promise<Insight[]> {
-		const insights: Insight[] = [];
-		const flows = await this.flowGraph.getAllFlows();
-
-		for (const flow of flows) {
-			if (!flow.productionMetrics) continue;
-
-			const synthetic = flow.syntheticMetrics?.successRate || 1.0;
-			const real = flow.productionMetrics.successRate;
-			const gap = Math.abs(synthetic - real);
-
-			if (gap > 0.2) {
-				// 20+ point discrepancy
-				insights.push({
-					type: "discrepancy",
-					severity: gap > 0.3 ? "high" : "medium",
-					flow: flow.name,
-					message: `${Math.round(gap * 100)}pt gap between synthetic (${Math.round(synthetic * 100)}%) and real (${Math.round(real * 100)}%) success rates`,
-					suggestedAction: this.suggestAction(flow, gap),
-					impact: await this.estimateRevenueImpact(flow, gap),
-				});
-			}
-		}
-
-		return insights;
-	}
-}
-```
-
-### Analytics Engine Exports
-
-```typescript
-// src/analytics/index.ts
-
-export class AnalyticsEngine {
-	constructor(
-		private eventBus: EventBus,
-		private flowGraph: FlowGraphClient,
-		private config: AnalyticsConfig,
-	) {}
-
-	// Called by CLI: Perceo analytics connect
-	async connectProvider(provider: "ga4" | "mixpanel" | "amplitude", credentials: any): Promise<void> {
-		const connector = this.createConnector(provider, credentials);
-
-		// Test connection
-		await connector.test();
-
-		// Save configuration
-		await this.config.save({ provider, credentials });
-
-		// Start ingestion
-		await this.startIngestion(connector);
-	}
-
-	// Called by CLI: Perceo analytics sync
-	async syncProductionData(): Promise<SyncResult> {
-		const connector = await this.getConfiguredConnector();
-
-		// Fetch events
-		const events = await connector.fetchEvents({
-			since: await this.getLastSyncTimestamp(),
-			limit: 10000,
-		});
-
-		// Match events to flows
-		const matches = await this.correlationEngine.matchToFlows(events);
-
-		// Update flow graph with metrics
-		for (const [flowName, metrics] of Object.entries(matches)) {
-			await this.flowGraph.updateProductionMetrics(flowName, metrics);
-		}
-
-		// Publish event
-		await this.eventBus.publish({
-			id: generateId(),
-			type: EventType.METRICS_UPDATED,
-			timestamp: Date.now(),
-			source: "analytics",
-			data: { flows: Object.keys(matches), eventCount: events.length },
-		});
-
-		return {
-			eventsProcessed: events.length,
-			flowsUpdated: Object.keys(matches).length,
-		};
-	}
-
-	// Called by CLI: Perceo analytics gaps
-	async findUntestedFlows(): Promise<UntestedFlow[]> {
-		const flows = await this.flowGraph.getAllFlows();
-		const productionSessions = await this.getProductionSessions();
-
-		// Find patterns in production that don't match any flow
-		const clusters = await this.clusterSessions(productionSessions);
-		const untested: UntestedFlow[] = [];
-
-		for (const cluster of clusters) {
-			const matched = flows.find((f) => this.correlationEngine.calculateSimilarity(f, cluster) > 0.7);
-
-			if (!matched) {
-				untested.push({
-					pattern: cluster.pattern,
-					weeklyUsers: cluster.sessionCount,
-					avgDuration: cluster.avgDuration,
-					confidence: cluster.confidence,
-				});
-			}
-		}
-
-		// Publish discoveries
-		await this.eventBus.publish({
-			id: generateId(),
-			type: EventType.CORRELATION_COMPLETE,
-			timestamp: Date.now(),
-			source: "analytics",
-			data: { untested },
-		});
-
-		return untested;
-	}
-
-	// Called by CLI: Perceo analytics impact
-	async estimateRevenueImpact(flowName: string): Promise<RevenueImpact> {
-		const flow = await this.flowGraph.getFlow(flowName);
-
-		if (!flow.productionMetrics) {
-			throw new Error("No production metrics available");
-		}
-
-		const { successRate, volume24h } = flow.productionMetrics;
-		const syntheticRate = flow.syntheticMetrics?.successRate || 1.0;
-
-		// Calculate potential improvement
-		const currentDailySuccess = volume24h * successRate;
-		const potentialDailySuccess = volume24h * syntheticRate;
-		const gap = potentialDailySuccess - currentDailySuccess;
-
-		// Estimate revenue (requires avg order value from analytics)
-		const avgOrderValue = await this.getAvgOrderValue(flowName);
-		const dailyImpact = gap * avgOrderValue;
-
-		return {
-			flow: flowName,
-			currentSuccessRate: successRate,
-			potentialSuccessRate: syntheticRate,
-			dailyAttempts: volume24h,
-			avgOrderValue,
-			estimatedDailyImpact: dailyImpact,
-			estimatedMonthlyImpact: dailyImpact * 30,
-			estimatedAnnualImpact: dailyImpact * 365,
-		};
-	}
-}
-```
-
----
-
-## Shared Data Models
-
-### Flow Graph Schema (Neo4j)
-
-```cypher
-// Nodes
-(Flow {
-  id: string,
-  name: string,
-  description: string,
-  priority: "critical" | "high" | "medium" | "low",
-  createdAt: timestamp,
-  lastModified: timestamp,
-
-  // Observer data
-  affectedByChanges: [changeId],
-  riskScore: float,
-
-  // Analyzer data
-  insights: [Insight],
-  predictions: [Prediction],
-  coverageScore: float,
-
-  // Analytics data
-  productionMetrics: {
-    successRate: float,
-    dailyUsers: int,
-    avgDuration: int,
-    topExitStep: string,
-    deviceBreakdown: {...},
-    cohortPerformance: {...}
-  },
-
-  // Coordinator data
-  syntheticMetrics: {
-    successRate: float,
-    avgDuration: int,
-    lastRun: timestamp
-  },
-
-  testResults: [TestResult]
-})
-
-(Step {
-  id: string,
-  name: string,
-  sequence: int,
-  actions: [string],
-  expectedState: {...}
-})
-
-(Persona {
-  id: string,
-  name: string,
-  description: string,
-  behaviors: [...]
-})
-
-// Relationships
-(Flow)-[:HAS_STEP]->(Step)
-(Flow)-[:FOR_PERSONA]->(Persona)
-(Flow)-[:RELATED_TO]->(Flow)
-(Step)-[:NEXT]->(Step)
-```
-
-### Shared TypeScript Interfaces
-
-```typescript
-// src/core/types.ts
-
-export interface Flow {
-	id: string;
-	name: string;
-	description: string;
-	priority: "critical" | "high" | "medium" | "low";
-	steps: Step[];
-	personas: string[];
-
-	// Observer contributions
-	affectedByChanges?: string[];
-	riskScore?: number;
-
-	// Analyzer contributions
-	insights?: Insight[];
-	predictions?: Prediction[];
-	coverageScore?: number;
-
-	// Analytics contributions
-	productionMetrics?: ProductionMetrics;
-
-	// Coordinator contributions
-	syntheticMetrics?: SyntheticMetrics;
-	testResults?: TestResult[];
-
-	createdAt: number;
-	lastModified: number;
-}
-
-export interface ProductionMetrics {
-	successRate: number;
-	dailyUsers: number;
-	avgDuration: number; // milliseconds
-	topExitStep?: string;
-	deviceBreakdown?: {
-		mobile: number;
-		desktop: number;
-		tablet: number;
-	};
-	cohortPerformance?: {
-		new_users: number;
-		returning_users: number;
-		[key: string]: number;
-	};
-	lastUpdated: number;
-}
-
-export interface SyntheticMetrics {
-	successRate: number;
-	avgDuration: number;
-	lastRun: number;
-	runCount: number;
-}
-
-export interface Insight {
-	id: string;
-	type: "discrepancy" | "coverage-gap" | "ux-issue" | "prediction";
-	severity: "critical" | "high" | "medium" | "low";
-	flow: string;
-	message: string;
-	suggestedAction?: string;
-	impact?: RevenueImpact;
-	createdAt: number;
-}
-
-export interface Prediction {
-	flowName: string;
-	probability: number; // 0-1
-	confidence: number; // 0-1
-	reasoning: string;
-	basedOn: "ml-model" | "heuristic" | "pattern";
-}
-```
-
----
-
-## Configuration Management
-
-### Unified Config File
+### Configuration
 
 ```jsonc
-// .perceo/config.json (base)
+// .perceo/config.json
 
 {
-	"version": "1.0",
+	"version": "2.0",
 	"project": {
+		"id": "uuid-from-supabase",
 		"name": "my-app",
 		"framework": "nextjs",
 	},
 
-	// Observer Engine config
+	// Supabase connection
+	"supabase": {
+		"url": "${SUPABASE_URL}",
+		"anonKey": "${SUPABASE_ANON_KEY}",
+		"serviceRoleKey": "${SUPABASE_SERVICE_ROLE_KEY}", // For CLI only
+	},
+
+	// Temporal connection
+	"temporal": {
+		"address": "${TEMPORAL_ADDRESS}",
+		"namespace": "perceo-production",
+		"taskQueue": "perceo-agents",
+	},
+
+	// Vercel dashboard
+	"dashboard": {
+		"url": "https://app.perceo.dev", // Or localhost in dev
+	},
+
+	// Observer config
 	"observer": {
 		"watch": {
 			"paths": ["app/", "src/"],
 			"ignore": ["node_modules/", ".next/"],
 			"debounceMs": 500,
-			"autoTest": true,
-		},
-		"ci": {
-			"strategy": "affected-flows",
-			"parallelism": 5,
-		},
-		"analysis": {
-			"useLLM": true,
-			"llmThreshold": 0.7,
 		},
 	},
 
-	// Analyzer Engine config
+	// Analyzer config
 	"analyzer": {
 		"insights": {
-			"enabled": true,
 			"updateInterval": 3600, // 1 hour
 			"minSeverity": "medium",
 		},
-		"predictions": {
-			"enabled": true,
-			"model": "ml", // or "heuristic"
-			"confidenceThreshold": 0.6,
-		},
-		"coverage": {
-			"minCoverageScore": 0.7,
-			"alertOnGaps": true,
-		},
 	},
 
-	// Analytics Engine config
+	// Analytics config
 	"analytics": {
 		"provider": "ga4",
-		"credentials": "${ANALYTICS_CREDENTIALS}",
 		"syncInterval": 300, // 5 minutes
-		"correlation": {
-			"algorithm": "smith-waterman",
-			"minSimilarity": 0.7,
-		},
-		"revenueTracking": {
-			"enabled": true,
-			"avgOrderValueSource": "analytics", // or "manual"
-		},
-	},
-
-	// Shared config
-	"flowGraph": {
-		"endpoint": "bolt://localhost:7687",
-		"database": "Perceo",
-	},
-
-	"eventBus": {
-		"type": "redis", // or "in-memory"
-		"redisUrl": "redis://localhost:6379",
-	},
-
-	"notifications": {
-		"slack": {
-			"enabled": false,
-			"webhook": "",
-		},
-		"email": {
-			"enabled": false,
-			"recipients": [],
-		},
 	},
 }
 ```
-
-### Local Development Overrides
-
-To make it easy to test the CLI and engine integrations locally before publishing packages, the CLI supports a simple override mechanism:
-
-- **Base config**: `.perceo/config.json` (checked into your app repo).
-- **Local config**: `.perceo/config.local.json` (optional, typically **git-ignored**).
-
-Resolution rules implemented by the CLI:
-
-- By default, `perceo` reads `.perceo/config.json`.
-- If `PERCEO_ENV=local` (or `NODE_ENV=development`) and `.perceo/config.local.json` exists, it is **deep‑merged on top of** the base config.
-- You can fully override the path with `PERCEO_CONFIG_PATH=/absolute/or/relative/path/to/config.json`.
-
-Example `.perceo/config.local.json` for local engine testing:
-
-```jsonc
-{
-	"flowGraph": {
-		"endpoint": "bolt://localhost:7687",
-		"database": "PerceoDev",
-	},
-	"eventBus": {
-		"type": "redis",
-		"redisUrl": "redis://localhost:6379",
-	},
-	"analytics": {
-		"provider": "ga4",
-		"credentials": "file:./secrets/ga4-local.json",
-	},
-}
-```
-
-This lets Perceo maintainers and advanced users:
-
-- Use cloud/production settings in `config.json`.
-- Quickly switch to on-device / local infrastructure for testing by:
-
-```bash
-export PERCEO_ENV=local
-perceo watch --dev --analyze
-```
-
-without exposing those local‑only details in the public npm package itself.
 
 ---
 
-## CLI Implementation Example
+## CLI Implementation
+
+### Core CLI Entry Point
+
+```typescript
+// src/cli/index.ts
+#!/usr/bin/env node
+
+import { Command } from 'commander';
+import { WatchCommand } from './commands/watch';
+import { CICommand } from './commands/ci';
+import { AnalyzeCommand } from './commands/analyze';
+import { AnalyticsCommand } from './commands/analytics';
+import { FlowsCommand } from './commands/flows';
+
+const program = new Command();
+
+program
+  .name('perceo')
+  .description('AI-powered regression testing')
+  .version('1.0.0');
+
+// Watch command
+program
+  .command('watch')
+  .description('Start development mode')
+  .option('--dev', 'Local development', true)
+  .option('--auto-test', 'Run tests on save')
+  .option('--analyze', 'Enable real-time insights')
+  .action(async (options) => {
+    const cmd = new WatchCommand();
+    await cmd.execute(options);
+  });
+
+// CI command
+const ci = program.command('ci').description('CI/PR mode');
+
+ci.command('analyze')
+  .option('--base <sha>', 'Base commit')
+  .option('--head <sha>', 'Head commit')
+  .option('--with-insights', 'Include predictions')
+  .action(async (options) => {
+    const cmd = new CICommand();
+    await cmd.analyze(options);
+  });
+
+ci.command('test')
+  .option('--flows-from <source>', 'analyze|all')
+  .option('--parallel <n>', 'Parallelism', '5')
+  .action(async (options) => {
+    const cmd = new CICommand();
+    await cmd.test(options);
+  });
+
+// ... more commands
+
+program.parse();
+```
+
+### Watch Command (Observer Engine)
 
 ```typescript
 // src/cli/commands/watch.ts
 
-import { Command } from "commander";
-import { ObserverEngine } from "../../observer";
-import { AnalyzerEngine } from "../../analyzer";
-import { EventBus } from "../../core/event-bus";
-import { EventType } from "../../core/events";
+import chokidar from "chokidar";
+import { createClient } from "@supabase/supabase-js";
+import { analyzeChanges } from "../../observer/analyzer";
 
 export class WatchCommand {
 	async execute(options: WatchOptions): Promise<void> {
 		const config = await loadConfig();
-		const eventBus = new EventBus(config.eventBus);
+		const supabase = createClient(config.supabase.url, config.supabase.serviceRoleKey);
 
-		// Initialize Observer
-		const observer = new ObserverEngine(eventBus, new FlowGraphClient(config.flowGraph), config.observer);
+		// Subscribe to Supabase Realtime for test results
+		supabase
+			.channel("test-results")
+			.on("postgres_changes", { event: "INSERT", schema: "public", table: "test_runs" }, (payload) => {
+				const result = payload.new;
+				const icon = result.status === "passed" ? "✅" : "❌";
+				console.log(`${icon} ${result.flow_name}: ${result.status}`);
+			})
+			.subscribe();
 
-		// Initialize Analyzer (if enabled)
-		let analyzer: AnalyzerEngine | null = null;
-		if (options.analyze || config.analyzer.insights.enabled) {
-			analyzer = new AnalyzerEngine(eventBus, new FlowGraphClient(config.flowGraph), config.analyzer);
+		if (options.analyze) {
+			// Subscribe to insights
+			supabase
+				.channel("insights")
+				.on("postgres_changes", { event: "INSERT", schema: "public", table: "insights" }, (payload) => {
+					const insight = payload.new;
+					console.log(`💡 [${insight.severity}] ${insight.message}`);
+				})
+				.subscribe();
 		}
 
-		// Subscribe to events for terminal output
-		eventBus.subscribe(EventType.FLOWS_AFFECTED, (event) => {
-			console.log(`\n[${timestamp()}] Flows affected by changes:`);
-			for (const flow of event.data.flows) {
-				console.log(`  • ${flow.name} (risk: ${flow.riskScore.toFixed(2)})`);
+		// Watch files
+		const watcher = chokidar.watch(config.observer.watch.paths, {
+			ignored: config.observer.watch.ignore,
+			ignoreInitial: true,
+		});
+
+		console.log("🔍 Perceo Observer started");
+		console.log(`📁 Watching: ${config.observer.watch.paths.join(", ")}\n`);
+
+		watcher.on("change", async (path) => {
+			console.log(`📝 Changed: ${path}`);
+
+			// Analyze changes
+			const diff = await getDiff(path);
+			const analysis = await analyzeChanges(diff);
+
+			// Update affected flows in Supabase
+			for (const flow of analysis.affectedFlows) {
+				await supabase
+					.from("flows")
+					.update({
+						affected_by_changes: supabase.rpc("array_append", {
+							arr: "affected_by_changes",
+							elem: analysis.changeId,
+						}),
+						risk_score: flow.riskScore,
+					})
+					.eq("id", flow.id);
+			}
+
+			if (options.autoTest) {
+				// Trigger tests via Temporal
+				await triggerTests(analysis.affectedFlows);
 			}
 		});
 
-		if (analyzer) {
-			eventBus.subscribe(EventType.INSIGHT_GENERATED, (event) => {
-				const { severity, message } = event.data;
-				const icon = severity === "high" ? "⚠️" : "ℹ️";
-				console.log(`\n${icon} [Analyzer] ${message}`);
-			});
-		}
-
-		eventBus.subscribe(EventType.TESTS_COMPLETED, (event) => {
-			const { passed, failed, duration } = event.data;
-			const status = failed === 0 ? "✅" : "❌";
-			console.log(`\n${status} Tests: ${passed} passed, ${failed} failed (${(duration / 1000).toFixed(1)}s)`);
-		});
-
-		// Start watching
-		console.log("🔍 Perceo Observer started");
-		if (analyzer) {
-			console.log("🧠 Analyzer Engine enabled");
-		}
-		console.log(`📁 Watching: ${config.observer.watch.paths.join(", ")}\n`);
-
-		await observer.startWatch();
-
 		// Keep process alive
-		await new Promise(() => {}); // Run forever
+		await new Promise(() => {});
 	}
 }
 ```
+
+### Analytics Sync (Analytics Engine)
 
 ```typescript
 // src/cli/commands/analytics.ts
 
-import { Command } from "commander";
-import { AnalyticsEngine } from "../../analytics";
-
 export class AnalyticsCommand {
 	async executeSync(options: SyncOptions): Promise<void> {
 		const config = await loadConfig();
-		const eventBus = new EventBus(config.eventBus);
-
-		const analytics = new AnalyticsEngine(eventBus, new FlowGraphClient(config.flowGraph), config.analytics);
+		const supabase = createClient(config.supabase.url, config.supabase.serviceRoleKey);
 
 		console.log("🔄 Syncing production data...");
-		const spinner = createSpinner();
-		spinner.start();
 
-		try {
-			const result = await analytics.syncProductionData();
-			spinner.stop();
+		// Call Vercel API route
+		const response = await fetch(`${config.dashboard.url}/api/analytics/sync`, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${config.supabase.serviceRoleKey}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				provider: config.analytics.provider,
+				since: await getLastSyncTimestamp(supabase),
+			}),
+		});
 
-			console.log("✅ Sync complete");
-			console.log(`   Events processed: ${result.eventsProcessed}`);
-			console.log(`   Flows updated: ${result.flowsUpdated}`);
+		const result = await response.json();
 
-			// Show any new insights
-			eventBus.subscribe(EventType.INSIGHT_GENERATED, (event) => {
-				console.log(`\n💡 New insight: ${event.data.message}`);
-			});
-		} catch (error) {
-			spinner.stop();
-			console.error("❌ Sync failed:", error.message);
-			process.exit(1);
+		console.log("✅ Sync complete");
+		console.log(`   Events processed: ${result.eventsProcessed}`);
+		console.log(`   Flows updated: ${result.flowsUpdated}`);
+
+		// Subscribe to new insights
+		const { data: insights } = await supabase.from("insights").select("*").eq("status", "open").order("created_at", { ascending: false }).limit(5);
+
+		if (insights && insights.length > 0) {
+			console.log("\n💡 Recent insights:");
+			for (const insight of insights) {
+				console.log(`   • [${insight.severity}] ${insight.message}`);
+			}
 		}
-	}
-
-	async executeGaps(options: GapsOptions): Promise<void> {
-		const config = await loadConfig();
-		const eventBus = new EventBus(config.eventBus);
-
-		const analytics = new AnalyticsEngine(eventBus, new FlowGraphClient(config.flowGraph), config.analytics);
-
-		console.log("🔍 Searching for untested flows in production...\n");
-
-		const untested = await analytics.findUntestedFlows();
-
-		if (untested.length === 0) {
-			console.log("✅ All production flows are tested!");
-			return;
-		}
-
-		console.log(`Found ${untested.length} untested flow(s):\n`);
-
-		for (const flow of untested) {
-			console.log(`📊 ${flow.pattern.name}`);
-			console.log(`   Weekly users: ${flow.weeklyUsers}`);
-			console.log(`   Avg duration: ${(flow.avgDuration / 1000).toFixed(1)}s`);
-			console.log(`   Confidence: ${(flow.confidence * 100).toFixed(0)}%`);
-			console.log();
-		}
-
-		console.log("💡 Run `Perceo flows create` to add these flows to your test suite");
 	}
 }
 ```
 
 ---
 
-## Development Workflow
+## Vercel API Routes
 
-### Local Development (All Engines Running)
+### Observer Analysis Endpoint
 
-```bash
-# Terminal 1: Start Observer in watch mode with Analyzer
-perceo watch --dev --analyze
+```typescript
+// pages/api/observer/analyze.ts
 
-# Terminal 2: Start Analytics sync (background process)
-perceo analytics sync --daemon
+import { createClient } from "@supabase/supabase-js";
+import Anthropic from "@anthropic-ai/sdk";
 
-# Terminal 3: Start Dashboard
-perceo dashboard --open
+export default async function handler(req, res) {
+	const { baseSha, headSha, withInsights } = req.body;
 
-# Now:
-# - Observer watches for file changes
-# - Analyzer generates real-time insights
-# - Analytics syncs production data every 5 min
-# - Dashboard shows everything in real-time
+	const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+
+	// Get diff
+	const diff = await getDiff(baseSha, headSha);
+
+	// Analyze with Claude
+	const anthropic = new Anthropic({
+		apiKey: process.env.ANTHROPIC_API_KEY,
+	});
+
+	const analysis = await anthropic.messages.create({
+		model: "claude-sonnet-4-20250514",
+		max_tokens: 2000,
+		messages: [
+			{
+				role: "user",
+				content: `Analyze this code diff and identify affected user flows:\n\n${diff}`,
+			},
+		],
+	});
+
+	// Get flows from Supabase
+	const { data: flows } = await supabase.from("flows").select("*");
+
+	// Match affected flows
+	const affectedFlows = matchFlows(analysis, flows);
+
+	// If predictions requested
+	if (withInsights) {
+		const predictions = await predictFailures(affectedFlows);
+
+		// Store predictions
+		await supabase.from("predictions").insert(
+			predictions.map((p) => ({
+				flow_id: p.flowId,
+				probability: p.probability,
+				confidence: p.confidence,
+				reasoning: p.reasoning,
+				commit_sha: headSha,
+			})),
+		);
+	}
+
+	res.json({
+		changeId: generateId(),
+		affectedFlows,
+		predictions: withInsights ? predictions : undefined,
+	});
+}
 ```
 
-### Managed Services & Local Testing Setup
+### Analytics Sync Endpoint
 
-The Observer Engine, Analyzer Engine, and Analytics Engine are implemented as **separate managed services** so that their internal code and models are **not** shipped inside the public `@perceo/perceo` npm package. The CLI interacts with these engines over APIs and the event bus.
+```typescript
+// pages/api/analytics/sync.ts
 
-For local, on-device development of the first versions, you can run compatible infrastructure yourself:
+import { createClient } from "@supabase/supabase-js";
 
-#### 1. Flow Graph Database (Neo4j)
+export default async function handler(req, res) {
+	const { provider, since } = req.body;
 
-- **Purpose**: Stores flows, personas, test results, production metrics, and analyzer insights.
-- **Used by**: All three engines plus the Coordinator.
-- **Config mapping**: `.perceo/config.json -> flowGraph.endpoint` and `flowGraph.database`.
+	const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
-Local Neo4j with Docker:
+	// Fetch events from analytics provider
+	const connector = createConnector(provider);
+	const events = await connector.fetchEvents({ since, limit: 10000 });
 
-```bash
-docker run \
-  --name perceo-neo4j \
-  -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/test1234 \
-  neo4j:5
-```
+	// Match events to flows (sequence alignment)
+	const { data: flows } = await supabase.from("flows").select("*");
+	const matches = await matchEventsToFlows(events, flows);
 
-Update `.perceo/config.json` if you change the URI, database, or credentials.
+	// Insert analytics events
+	await supabase.from("analytics_events").insert(
+		events.map((e) => ({
+			project_id: req.user.projectId,
+			event_type: e.type,
+			flow_id: matches[e.id]?.flowId,
+			flow_confidence: matches[e.id]?.confidence,
+			metadata: e.metadata,
+			created_at: e.timestamp,
+		})),
+	);
 
-#### 2. Perceo Managed APIs on Supabase
+	// Update flow metrics
+	for (const [flowId, metrics] of Object.entries(aggregateMetrics(matches))) {
+		await supabase.from("flow_metrics").upsert({
+			flow_id: flowId,
+			prod_success_rate: metrics.successRate,
+			prod_daily_users: metrics.dailyUsers,
+			prod_avg_duration_ms: metrics.avgDuration,
+			prod_last_updated: new Date().toISOString(),
+		});
+	}
 
-To avoid exposing engine implementation details in the CLI package, the Observer/Analyzer/Analytics engines are designed to run behind managed APIs. For local testing, you can host equivalent APIs using Supabase:
+	// Analyze discrepancies
+	const insights = await analyzeDiscrepancies(supabase);
 
-- **Supabase roles**:
-    - Postgres: long-term event store, metrics, and configuration.
-    - Auth: multi-project and multi-user access control for Perceo.
-    - Edge functions: HTTP/GraphQL endpoints that expose engine capabilities to the CLI.
+	// Insert insights
+	if (insights.length > 0) {
+		await supabase.from("insights").insert(insights);
+	}
 
-Suggested local setup:
-
-```bash
-# In a separate folder from your app
-supabase init perceo-services
-cd perceo-services
-supabase start
-```
-
-High-level mapping:
-
-- Observer Engine API:
-    - Stores change events and affected flows into Supabase (and mirrors key data into Neo4j).
-- Analyzer Engine API:
-    - Reads flow graph from Neo4j, stores insights and model state in Supabase.
-- Analytics Engine API:
-    - Ingests external analytics (GA4, Mixpanel, etc.), stores raw events in Supabase, and updates Neo4j metrics.
-
-In a hosted environment, these services live in Perceo Cloud; locally, you can approximate them with Supabase-based functions and tables without bundling any of that engine code into the CLI.
-
-#### 3. Event Bus (Redis or In-Memory)
-
-The event bus connects engines and the coordinator:
-
-- **Local default**: in-memory event bus (`eventBus.type = "in-memory"`).
-- **Distributed/dev**: Redis (`eventBus.type = "redis"` and `eventBus.redisUrl` set).
-
-Local Redis with Docker:
-
-```bash
-docker run -d --name perceo-redis -p 6379:6379 redis:7
-```
-
-#### 4. Putting It All Together
-
-1. Start Neo4j and (optionally) Redis locally.
-2. Run your Supabase-backed Perceo managed APIs locally (or point the CLI at Perceo Cloud).
-3. Initialize your project with:
-
-```bash
-perceo init
-```
-
-This generates `.perceo/config.json` with:
-
-- Observer, Analyzer, and Analytics engine settings.
-- Flow graph connection (Neo4j).
-- Event bus configuration (in-memory or Redis).
-
-4. Start the full local loop:
-
-```bash
-perceo watch --dev --analyze &
-perceo analytics sync &
-perceo dashboard --open
-```
-
-This setup lets you iterate on the CLI and configuration while keeping the core engine implementations isolated in managed services (or Supabase-hosted APIs) instead of inside the npm package.
-
-### CI/PR Workflow (Observer → Analyzer → Coordinator)
-
-```yaml
-# .github/workflows/perceo.yml
-
-- name: Analyze PR with predictions
-  run: |
-      perceo ci analyze \
-        --base ${{ github.base_ref }} \
-        --head ${{ github.head_ref }} \
-        --with-insights  # Includes Analyzer predictions
-
-- name: Run affected tests
-  run: |
-      perceo ci test \
-        --flows-from analyze \
-        --parallel 5
-```
-
-### Production Monitoring (Analytics → Analyzer → Alerts)
-
-```bash
-# Cron job or scheduled task
-0 */1 * * * perceo analytics sync
-0 */6 * * * perceo analyze insights --severity high --notify
+	res.json({
+		eventsProcessed: events.length,
+		flowsUpdated: Object.keys(matches).length,
+		insightsGenerated: insights.length,
+	});
+}
 ```
 
 ---
 
-## Next Steps
+## Temporal Workflows & Activities
 
-1. **Implement Event Bus** (Week 1)
-    - Redis pub/sub for distributed mode
-    - In-memory for local development
-    - Event replay for debugging
+### Coordinator Workflow
 
-2. **Define Shared Interfaces** (Week 1)
-    - TypeScript types in `src/core/types.ts`
-    - Neo4j schema for Flow Graph
-    - Event payloads for each engine
+```typescript
+// src/temporal/workflows/test-coordinator.ts
 
-3. **Build CLI Foundation** (Week 1)
-    - Commander.js setup
-    - Config file management
-    - Shared utilities
+import { proxyActivities } from "@temporalio/workflow";
+import type * as activities from "../activities";
 
-4. **Integrate Observer** (Week 2)
-    - Export key methods
-    - Subscribe to relevant events
-    - Publish flow impact events
+const { spawnAgent, executeStep, collectResults, storeResults } = proxyActivities<typeof activities>({
+	startToCloseTimeout: "5 minutes",
+	retry: {
+		maximumAttempts: 3,
+	},
+});
 
-5. **Integrate Analyzer** (Week 3)
-    - Subscribe to test results
-    - Subscribe to production metrics
-    - Publish insights and predictions
+export async function runFlowTests(request: TestRequest): Promise<TestResult[]> {
+	const results: TestResult[] = [];
 
-6. **Integrate Analytics** (Week 3)
-    - Build connector framework
-    - Implement correlation engine
-    - Publish metrics updates
+	// Parallel execution
+	for (const flow of request.flows) {
+		const agentId = generateId();
 
-7. **End-to-End Testing** (Week 4)
-    - All engines running together
-    - Event flow validation
-    - Performance benchmarking
+		try {
+			// Spawn browser agent
+			await spawnAgent({ flowId: flow.id, agentId });
+
+			// Execute steps
+			for (const step of flow.steps) {
+				await executeStep({
+					agentId,
+					step,
+					retries: 3,
+				});
+			}
+
+			// Collect results
+			const result = await collectResults({ agentId });
+
+			// Store in Supabase
+			await storeResults({
+				flowId: flow.id,
+				result,
+				prNumber: request.prNumber,
+				commitSha: request.commitSha,
+			});
+
+			results.push(result);
+		} catch (error) {
+			results.push({
+				flowId: flow.id,
+				status: "error",
+				error: error.message,
+			});
+		}
+	}
+
+	return results;
+}
+```
+
+### Activities (Vercel Serverless Functions)
+
+```typescript
+// src/temporal/activities/index.ts
+
+import { chromium } from "playwright";
+import { createClient } from "@supabase/supabase-js";
+import Anthropic from "@anthropic-ai/sdk";
+
+const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+
+export async function spawnAgent(args: { flowId: string; agentId: string }) {
+	const browser = await chromium.launch({
+		headless: true,
+	});
+
+	const context = await browser.newContext({
+		viewport: { width: 1280, height: 720 },
+		recordVideo: { dir: `/tmp/videos/${args.agentId}` },
+	});
+
+	const page = await context.newPage();
+
+	// Store browser context
+	global.agents = global.agents || {};
+	global.agents[args.agentId] = { browser, context, page };
+
+	return { agentId: args.agentId };
+}
+
+export async function executeStep(args: { agentId: string; step: Step; retries: number }) {
+	const agent = global.agents[args.agentId];
+	const { page } = agent;
+
+	// Use Claude for computer use
+	const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+	// Take screenshot
+	const screenshot = await page.screenshot();
+
+	// Ask Claude what to do
+	const response = await anthropic.messages.create({
+		model: "claude-sonnet-4-20250514",
+		max_tokens: 1000,
+		messages: [
+			{
+				role: "user",
+				content: [
+					{
+						type: "image",
+						source: {
+							type: "base64",
+							media_type: "image/png",
+							data: screenshot.toString("base64"),
+						},
+					},
+					{
+						type: "text",
+						text: `Execute this step: ${args.step.name}\nActions: ${JSON.stringify(args.step.actions)}`,
+					},
+				],
+			},
+		],
+		tools: [
+			{
+				type: "computer_20241022",
+				name: "computer",
+				display_width_px: 1280,
+				display_height_px: 720,
+			},
+		],
+	});
+
+	// Execute tool calls
+	for (const block of response.content) {
+		if (block.type === "tool_use") {
+			// Execute browser action
+			await executeBrowserAction(page, block.input);
+		}
+	}
+
+	return { success: true };
+}
+
+export async function collectResults(args: { agentId: string }) {
+	const agent = global.agents[args.agentId];
+	const { page, browser, context } = agent;
+
+	// Final screenshot
+	const screenshot = await page.screenshot();
+
+	// Stop video recording
+	await context.close();
+
+	// Upload to Supabase Storage
+	const { data: screenshotData } = await supabase.storage.from("screenshots").upload(`${args.agentId}/final.png`, screenshot);
+
+	const videoPath = `/tmp/videos/${args.agentId}`;
+	const { data: videoData } = await supabase.storage.from("videos").upload(`${args.agentId}/recording.webm`, fs.readFileSync(videoPath));
+
+	await browser.close();
+	delete global.agents[args.agentId];
+
+	return {
+		screenshot: screenshotData?.path,
+		video: videoData?.path,
+		status: "passed",
+	};
+}
+
+export async function storeResults(args: { flowId: string; result: any; prNumber?: number; commitSha?: string }) {
+	await supabase.from("test_runs").insert({
+		flow_id: args.flowId,
+		status: args.result.status,
+		duration_ms: args.result.duration,
+		screenshots: [args.result.screenshot],
+		video_url: args.result.video,
+		pr_number: args.prNumber,
+		commit_sha: args.commitSha,
+	});
+}
+```
+
+---
+
+## Deployment & Cost Estimate
+
+### Monthly Costs
+
+**Vercel:**
+
+- Free tier: $0 (for personal projects)
+- Pro: $20/month (for teams)
+
+**Supabase:**
+
+- Pro: $25/month
+    - 8 GB database
+    - 100 GB bandwidth
+    - 100 GB file storage
+
+**Temporal Cloud:**
+
+- Starter: $200/month
+    - 200 actions/second
+    - Unlimited workflows
+
+**Total: ~$245/month** (with Vercel Pro)
+**Total: ~$225/month** (with Vercel Free)
+
+### Scaling Plan
+
+**Month 1-3 (MVP):**
+
+- Vercel Free + Supabase Pro + Temporal Starter
+- Support 10 projects, 100 flows, 1000 tests/day
+- Cost: ~$225/month
+
+**Month 4-6 (Early customers):**
+
+- Vercel Pro + Supabase Pro + Temporal Growth
+- Support 50 projects, 500 flows, 10k tests/day
+- Cost: ~$500/month
+
+**Month 7+ (Scale):**
+
+- Evaluate dedicated infrastructure
+- Consider self-hosted Temporal
+- Supabase Team plan if needed
+
+---
+
+## Next Steps (Week-by-Week)
+
+### Week 1: Foundation
+
+- [ ] Set up Supabase project
+- [ ] Define database schema (run migrations)
+- [ ] Create Vercel Next.js app
+- [ ] Set up Temporal Cloud namespace
+- [ ] Build CLI skeleton with Commander.js
+
+### Week 2: Observer Engine
+
+- [ ] Implement file watching (Chokidar)
+- [ ] Git diff analysis
+- [ ] Claude API integration for change classification
+- [ ] Supabase write operations
+- [ ] `perceo watch` command
+
+### Week 3: Coordinator + Agents
+
+- [ ] Temporal workflows
+- [ ] Playwright activities
+- [ ] Computer use integration
+- [ ] Supabase storage uploads
+- [ ] `perceo ci test` command
+
+### Week 4: Analytics Engine
+
+- [ ] GA4 connector
+- [ ] Event matching algorithm
+- [ ] Metrics aggregation
+- [ ] Supabase analytics queries
+- [ ] `perceo analytics sync` command
+
+### Week 5: Analyzer Engine
+
+- [ ] Discrepancy detection
+- [ ] Insight generation
+- [ ] ML prediction model (simple heuristics first)
+- [ ] `perceo analyze insights` command
+
+### Week 6: Dashboard
+
+- [ ] Next.js UI with Supabase Realtime
+- [ ] Flow visualization
+- [ ] Test results view
+- [ ] Analytics correlation view
+- [ ] Insights feed
+
+### Week 7-8: Polish & Demo
+
+- [ ] End-to-end testing
+- [ ] Documentation
+- [ ] Demo video
+- [ ] YC prep
 
 ---
 
 ## Summary
 
-The unified CLI architecture ensures:
+**Three services. Zero complexity.**
 
-1. **Clear Separation**: Each engine is independently developed and testable
-2. **Loose Coupling**: Event bus enables async communication without direct dependencies
-3. **Seamless Integration**: Engines collaborate through well-defined events and shared data models
-4. **Developer Experience**: Single CLI with intuitive commands that orchestrate multiple engines
-5. **Scalability**: Redis-based event bus allows distributed deployment when needed
+- **Vercel**: Dashboard + API + Temporal workers
+- **Supabase**: All data + Realtime event bus + Storage + Auth
+- **Temporal**: Orchestration only
 
-The Observer detects changes, the Analyzer provides intelligence, and the Analytics engine validates against reality — all working together through a unified interface that developers interact with via `perceo` commands.
+**No Redis. No Neo4j. No separate backend.**
+
+Graph data lives in Postgres JSONB. Event bus is Supabase Realtime. Everything deploys with `git push`.
+
+**Ship in 6-8 weeks. Prove the concept. Add infrastructure when needed, not before.**

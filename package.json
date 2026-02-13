@@ -10,6 +10,9 @@
 		"cli:dev": "pnpm --filter @perceo/perceo dev",
 		"cli:build": "pnpm --filter @perceo/perceo build",
 		"cli:test": "node apps/cli/dist/index.js",
+		"worker:dev": "pnpm --filter @perceo/temporal-worker dev",
+		"worker:build": "pnpm --filter @perceo/temporal-worker build",
+		"worker:start": "pnpm --filter @perceo/temporal-worker start",
 		"changeset": "changeset"
 	},
 	"devDependencies": {

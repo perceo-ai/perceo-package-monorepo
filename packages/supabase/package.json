@@ -1,13 +1,10 @@
 {
-	"name": "@perceo/observer-engine",
-	"version": "1.0.0",
-	"description": "Observer Engine core used by the Perceo CLI for flow/persona bootstrap and change impact analysis.",
+	"name": "@perceo/supabase",
+	"version": "0.1.0",
+	"description": "Shared Supabase client for Perceo (auth, data, and more)",
 	"keywords": [
 		"perceo",
-		"observer",
-		"analysis",
-		"flows",
-		"ci"
+		"supabase"
 	],
 	"license": "MIT",
 	"type": "module",
@@ -22,7 +19,7 @@
 		"check-types": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@temporalio/client": "^1.11.5"
+		"@supabase/supabase-js": "^2.47.0"
 	},
 	"devDependencies": {
 		"@repo/typescript-config": "workspace:*",
@@ -30,7 +27,7 @@
 		"tsup": "^8.0.1",
 		"typescript": "5.9.2"
 	},
-	"peerDependencies": {
-		"@perceo/perceo": "0.2.0"
+	"engines": {
+		"node": ">=18"
 	}
 }

@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # Temporal server with auto-setup
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "7233:7233"  # Temporal gRPC endpoint
+      - "8233:8233"  # Temporal HTTP API
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=postgres
+    depends_on:
+      - postgres
+
+  # Temporal UI
+  temporal-ui:
+    image: temporalio/ui:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    depends_on:
+      - temporal
+
+  # PostgreSQL for Temporal
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=temporal
+      - POSTGRES_PASSWORD=temporal
+      - POSTGRES_DB=temporal
+    volumes:
+      - temporal-postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # Perceo Temporal Worker
+  # Uncomment to run worker in Docker (or run locally with pnpm start)
+  # perceo-worker:
+  #   build:
+  #     context: ../..
+  #     dockerfile: apps/temporal-worker/Dockerfile
+  #   environment:
+  #     - PERCEO_TEMPORAL_ADDRESS=temporal:7233
+  #     - PERCEO_TEMPORAL_NAMESPACE=perceo
+  #     - PERCEO_TEMPORAL_TASK_QUEUE=observer-engine
+  #     - PERCEO_API_BASE_URL=${PERCEO_API_BASE_URL}
+  #     - PERCEO_API_KEY=${PERCEO_API_KEY}
+  #     - PERCEO_NEO4J_URI=${PERCEO_NEO4J_URI}
+  #     - PERCEO_NEO4J_DATABASE=${PERCEO_NEO4J_DATABASE}
+  #     - PERCEO_NEO4J_USERNAME=${PERCEO_NEO4J_USERNAME}
+  #     - PERCEO_NEO4J_PASSWORD=${PERCEO_NEO4J_PASSWORD}
+  #     - PERCEO_REDIS_URL=${PERCEO_REDIS_URL}
+  #   depends_on:
+  #     - temporal
+
+volumes:
+  temporal-postgres:

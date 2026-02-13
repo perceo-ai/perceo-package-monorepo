@@ -1,3 +1,14 @@
+export interface TemporalConfig {
+	enabled: boolean;
+	address?: string;
+	namespace?: string;
+	taskQueue?: string;
+	tls?: {
+		certPath: string;
+		keyPath: string;
+	};
+}
+
 export interface ObserverEngineConfig {
 	observer: {
 		watch: {
@@ -30,6 +41,7 @@ export interface ObserverEngineConfig {
 		type: "in-memory" | "redis";
 		redisUrl?: string;
 	};
+	temporal?: TemporalConfig;
 }
 
 export interface ChangeAnalysisFile {
