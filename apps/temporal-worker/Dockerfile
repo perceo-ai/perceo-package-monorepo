@@ -37,7 +37,8 @@ COPY packages/supabase ./packages/supabase
 COPY packages/typescript-config ./packages/typescript-config
 
 # Build the worker and dependencies
-RUN pnpm --filter @perceo/temporal-worker build
+# Use ... to include all dependencies in the build
+RUN pnpm --filter @perceo/temporal-worker... build
 
 # Stage 2: Production
 FROM node:20-alpine AS runner
