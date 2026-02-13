@@ -4,7 +4,9 @@ import ora from "ora";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isLoggedIn } from "../auth.js";
-import { PerceoDataClient, type FlowInsert, type ApiKeyScope } from "@perceo/supabase";
+import { PerceoDataClient, type FlowInsert, type ApiKeyScope, getSupabaseUrl, getSupabaseAnonKey } from "@perceo/supabase";
+import { detectGitHubRemote, authorizeGitHub, createRepositorySecret, checkRepositoryPermissions } from "../github.js";
+import { createInterface } from "node:readline";
 
 type InitOptions = {
 	dir: string;
@@ -54,66 +56,63 @@ export const initCommand = new Command("init")
 			// Ensure .perceo directory exists
 			await fs.mkdir(perceoDir, { recursive: true });
 
-			// Check for Supabase config
-			const supabaseUrl = process.env.PERCEO_SUPABASE_URL;
-			const supabaseKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY || process.env.PERCEO_SUPABASE_ANON_KEY;
+			// Use embedded Perceo Cloud credentials
+			const supabaseUrl = getSupabaseUrl();
+			const supabaseKey = getSupabaseAnonKey();
 
 			let projectId: string | null = null;
 			let flowsDiscovered = 0;
 			let flowsNew = 0;
 
-			if (supabaseUrl && supabaseKey) {
-				spinner.text = "Connecting to Supabase...";
-				const client = new PerceoDataClient({ supabaseUrl, supabaseKey });
+			spinner.text = "Connecting to Perceo Cloud...";
+			const client = new PerceoDataClient({ supabaseUrl, supabaseKey });
 
-				// Get or create project
-				let project = await client.getProjectByName(projectName);
-				if (!project) {
-					spinner.text = "Creating project...";
-					project = await client.createProject({
-						name: projectName,
-						framework,
-						config: { source: "cli-init" },
-					});
-				}
-				projectId = project.id;
-
-				// Discover and bootstrap flows
-				spinner.text = "Discovering flows from codebase...";
-				const discoveredFlows = await discoverFlows(projectDir, framework);
-				flowsDiscovered = discoveredFlows.length;
-
-				// Check existing flows
-				const existingFlows = await client.getFlows(projectId);
-				const existingNames = new Set(existingFlows.map(f => f.name));
-
-				// Prepare flows for upsert
-				const flowsToUpsert: FlowInsert[] = discoveredFlows.map(flow => ({
-					project_id: projectId!,
-					name: flow.name,
-					description: flow.description,
-					priority: flow.priority as "critical" | "high" | "medium" | "low",
-					entry_point: flow.entryPoint,
-					graph_data: {
-						components: flow.components,
-						pages: flow.pages,
-					},
-				}));
-
-				// Upsert flows to Supabase
-				spinner.text = "Saving flows to Supabase...";
-				await client.upsertFlows(flowsToUpsert);
-
-				flowsNew = discoveredFlows.filter(f => !existingNames.has(f.name)).length;
+			// Get or create project
+			let project = await client.getProjectByName(projectName);
+			if (!project) {
+				spinner.text = "Creating project...";
+				project = await client.createProject({
+					name: projectName,
+					framework,
+					config: { source: "cli-init" },
+				});
 			}
+			projectId = project.id;
+
+			// Discover and bootstrap flows
+			spinner.text = "Discovering flows from codebase...";
+			const discoveredFlows = await discoverFlows(projectDir, framework);
+			flowsDiscovered = discoveredFlows.length;
+
+			// Check existing flows
+			const existingFlows = await client.getFlows(projectId);
+			const existingNames = new Set(existingFlows.map(f => f.name));
+
+			// Prepare flows for upsert
+			const flowsToUpsert: FlowInsert[] = discoveredFlows.map(flow => ({
+				project_id: projectId!,
+				name: flow.name,
+				description: flow.description,
+				priority: flow.priority as "critical" | "high" | "medium" | "low",
+				entry_point: flow.entryPoint,
+				graph_data: {
+					components: flow.components,
+					pages: flow.pages,
+				},
+			}));
+
+			// Upsert flows to Supabase
+			spinner.text = "Saving flows to Supabase...";
+			await client.upsertFlows(flowsToUpsert);
+
+			flowsNew = discoveredFlows.filter(f => !existingNames.has(f.name)).length;
 
 			// Generate API key and GitHub Actions workflow
 			let apiKey: string | null = null;
 			let workflowCreated = false;
+			let githubAutoConfigured = false;
 			
-			if (projectId && supabaseUrl && supabaseKey && !options.skipGithub) {
-				const client = new PerceoDataClient({ supabaseUrl, supabaseKey });
-				
+			if (projectId && !options.skipGithub) {
 				spinner.text = "Generating CI API key...";
 				
 				const scopes: ApiKeyScope[] = [
@@ -131,8 +130,67 @@ export const initCommand = new Command("init")
 					});
 					apiKey = key;
 
-					// Create GitHub Actions workflow
-					spinner.text = "Creating GitHub Actions workflow...";
+					// Detect GitHub remote
+					const remote = detectGitHubRemote(projectDir);
+					
+					if (remote) {
+						spinner.stop();
+						console.log(chalk.cyan(`\n📦 Detected GitHub repository: ${remote.owner}/${remote.repo}`));
+						
+						const rl = createInterface({ input: process.stdin, output: process.stdout });
+						const answer = await new Promise<string>((resolve) => {
+							rl.question(
+								chalk.bold("Auto-configure GitHub Actions? (Y/n): "),
+								(ans) => {
+									rl.close();
+									resolve((ans || "y").toLowerCase());
+								}
+							);
+						});
+
+						if (answer === "y" || answer === "yes" || answer === "") {
+							try {
+								spinner.start("Authorizing with GitHub...");
+								const ghAuth = await authorizeGitHub();
+								
+								spinner.text = "Checking repository permissions...";
+								const hasPermission = await checkRepositoryPermissions(
+									ghAuth.accessToken,
+									remote.owner,
+									remote.repo
+								);
+								
+								if (!hasPermission) {
+									spinner.warn("Insufficient permissions to write to repository");
+									console.log(chalk.yellow("  You need admin or push access to configure secrets automatically."));
+								} else {
+									spinner.text = "Creating PERCEO_API_KEY secret...";
+									await createRepositorySecret(
+										ghAuth.accessToken,
+										remote.owner,
+										remote.repo,
+										"PERCEO_API_KEY",
+										apiKey
+									);
+									
+									githubAutoConfigured = true;
+									spinner.text = "Creating GitHub Actions workflow...";
+								}
+							} catch (error) {
+								spinner.warn("GitHub authorization failed");
+								console.log(chalk.yellow(`  ${error instanceof Error ? error.message : "Unknown error"}`));
+								console.log(chalk.gray("  Continuing with manual setup instructions..."));
+							}
+						}
+						
+						if (!githubAutoConfigured) {
+							spinner.start("Creating GitHub Actions workflow...");
+						}
+					} else {
+						spinner.text = "Creating GitHub Actions workflow...";
+					}
+
+					// Create GitHub Actions workflow file
 					const workflowDir = path.join(projectDir, ".github", "workflows");
 					const workflowPath = path.join(workflowDir, "perceo.yml");
 
@@ -145,7 +203,8 @@ export const initCommand = new Command("init")
 					}
 				} catch (error) {
 					// Don't fail init if API key generation fails
-					spinner.text = "Continuing without CI setup...";
+					spinner.warn("Continuing without CI setup");
+					console.log(chalk.yellow(`  ${error instanceof Error ? error.message : "Unknown error"}`));
 				}
 			}
 
@@ -169,17 +228,19 @@ export const initCommand = new Command("init")
 			console.log("\n" + chalk.bold("Project: ") + projectName);
 			console.log(chalk.bold("Framework: ") + framework);
 			console.log(chalk.bold("Config: ") + path.relative(projectDir, perceoConfigPath));
-			
-			if (projectId) {
-				console.log(chalk.bold("Project ID: ") + projectId);
-				console.log(chalk.bold("Flows discovered: ") + `${flowsDiscovered} (${flowsNew} new)`);
-			} else {
-				console.log(chalk.yellow("\n⚠️  Supabase not configured. Set PERCEO_SUPABASE_URL and PERCEO_SUPABASE_ANON_KEY to enable flow sync."));
-			}
+			console.log(chalk.bold("Project ID: ") + projectId);
+			console.log(chalk.bold("Flows discovered: ") + `${flowsDiscovered} (${flowsNew} new)`);
 
 			// GitHub Actions setup output
-			if (apiKey && workflowCreated) {
-				console.log("\n" + chalk.bold.green("GitHub Actions Setup:"));
+			if (githubAutoConfigured && workflowCreated) {
+				console.log("\n" + chalk.bold.green("✓ GitHub Actions configured automatically!"));
+				console.log(chalk.gray("─".repeat(50)));
+				console.log("\n  Workflow: " + chalk.cyan(".github/workflows/perceo.yml"));
+				console.log("  Secret: " + chalk.green("PERCEO_API_KEY") + " " + chalk.gray("(already added)"));
+				console.log("\n" + chalk.gray("  CI will run on pull requests automatically."));
+				console.log(chalk.gray("─".repeat(50)));
+			} else if (apiKey && workflowCreated) {
+				console.log("\n" + chalk.bold.yellow("GitHub Actions Setup (Manual):"));
 				console.log(chalk.gray("─".repeat(50)));
 				console.log("\n  Workflow created at: " + chalk.cyan(".github/workflows/perceo.yml"));
 				console.log("\n  " + chalk.bold("Add this secret to your repository:"));
@@ -187,7 +248,7 @@ export const initCommand = new Command("init")
 				console.log("\n  Name:  " + chalk.yellow("PERCEO_API_KEY"));
 				console.log("  Value: " + chalk.green(apiKey));
 				console.log("\n" + chalk.gray("  ⚠️  This key is shown only once. Store it securely."));
-				console.log(chalk.gray("  ⚠️  The key is project-scoped and can be managed with: perceo keys list"));
+				console.log(chalk.gray("  ⚠️  Manage keys with: perceo keys list"));
 				console.log(chalk.gray("─".repeat(50)));
 			} else if (apiKey && !workflowCreated) {
 				console.log("\n" + chalk.bold.green("CI API Key Generated:"));
@@ -198,11 +259,15 @@ export const initCommand = new Command("init")
 				console.log("\n  Workflow already exists at .github/workflows/perceo.yml");
 				console.log(chalk.gray("─".repeat(50)));
 			} else if (!options.skipGithub && projectId) {
-				console.log("\n" + chalk.yellow("⚠️  GitHub Actions setup skipped. Run with --skip-github=false to retry."));
+				console.log("\n" + chalk.yellow("⚠️  GitHub Actions setup skipped."));
 			}
 
 			console.log("\n" + chalk.bold("Next steps:"));
-			if (apiKey) {
+			if (githubAutoConfigured) {
+				console.log("  1. Review flows: " + chalk.cyan("perceo flows list"));
+				console.log("  2. Commit and push: " + chalk.cyan("git add . && git commit -m 'Add Perceo' && git push"));
+				console.log("  3. Open a PR to see Perceo analyze your changes!");
+			} else if (apiKey) {
 				console.log("  1. " + chalk.bold("Add the PERCEO_API_KEY secret to GitHub") + " (see above)");
 				console.log("  2. Review flows: " + chalk.cyan("perceo flows list"));
 				console.log("  3. Commit and push to trigger CI: " + chalk.cyan("git add . && git commit -m 'Add Perceo'"));
@@ -210,7 +275,7 @@ export const initCommand = new Command("init")
 				console.log("  1. Review flows: " + chalk.cyan("perceo flows list"));
 				console.log("  2. Analyze PR changes: " + chalk.cyan("perceo analyze --base main"));
 			}
-			console.log("\n" + chalk.gray("You are logged in; use perceo logout to sign out."));
+			console.log("\n" + chalk.gray("Run `perceo logout` to sign out if needed."));
 		} catch (error) {
 			spinner.fail("Failed to initialize Perceo");
 			console.error(chalk.red(error instanceof Error ? error.message : "Unknown error"));

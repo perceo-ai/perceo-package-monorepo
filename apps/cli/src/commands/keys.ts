@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
-import { PerceoDataClient, type ApiKeyScope } from "@perceo/supabase";
+import { PerceoDataClient, type ApiKeyScope, getSupabaseUrl, getSupabaseAnonKey } from "@perceo/supabase";
 import { loadConfig } from "../config.js";
 import { isLoggedIn } from "../auth.js";
 
@@ -36,13 +36,8 @@ keysCommand
 				process.exit(1);
 			}
 
-			const supabaseUrl = process.env.PERCEO_SUPABASE_URL;
-			const supabaseKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY || process.env.PERCEO_SUPABASE_ANON_KEY;
-
-			if (!supabaseUrl || !supabaseKey) {
-				spinner.fail("Supabase not configured. Set PERCEO_SUPABASE_URL and PERCEO_SUPABASE_ANON_KEY.");
-				process.exit(1);
-			}
+			const supabaseUrl = getSupabaseUrl();
+			const supabaseKey = getSupabaseAnonKey();
 
 			const client = new PerceoDataClient({ supabaseUrl, supabaseKey, projectId });
 			const keys = options.all 
@@ -116,13 +111,8 @@ keysCommand
 				process.exit(1);
 			}
 
-			const supabaseUrl = process.env.PERCEO_SUPABASE_URL;
-			const supabaseKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY || process.env.PERCEO_SUPABASE_ANON_KEY;
-
-			if (!supabaseUrl || !supabaseKey) {
-				spinner.fail("Supabase not configured. Set PERCEO_SUPABASE_URL and PERCEO_SUPABASE_ANON_KEY.");
-				process.exit(1);
-			}
+			const supabaseUrl = getSupabaseUrl();
+			const supabaseKey = getSupabaseAnonKey();
 
 			const client = new PerceoDataClient({ supabaseUrl, supabaseKey, projectId });
 
@@ -191,13 +181,8 @@ keysCommand
 				process.exit(1);
 			}
 
-			const supabaseUrl = process.env.PERCEO_SUPABASE_URL;
-			const supabaseKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY || process.env.PERCEO_SUPABASE_ANON_KEY;
-
-			if (!supabaseUrl || !supabaseKey) {
-				spinner.fail("Supabase not configured. Set PERCEO_SUPABASE_URL and PERCEO_SUPABASE_ANON_KEY.");
-				process.exit(1);
-			}
+			const supabaseUrl = getSupabaseUrl();
+			const supabaseKey = getSupabaseAnonKey();
 
 			const client = new PerceoDataClient({ supabaseUrl, supabaseKey, projectId });
 			const keys = await client.getApiKeys(projectId);

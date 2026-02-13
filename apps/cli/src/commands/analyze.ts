@@ -3,7 +3,7 @@ import chalk from "chalk";
 import ora from "ora";
 import path from "node:path";
 import { loadConfig } from "../config.js";
-import { PerceoDataClient, type Flow } from "@perceo/supabase";
+import { PerceoDataClient, type Flow, getSupabaseUrl, getSupabaseAnonKey } from "@perceo/supabase";
 import { computeChangeAnalysis, type ChangeAnalysisFile } from "@perceo/observer-engine";
 
 // ============================================================================
@@ -58,15 +58,9 @@ export const analyzeCommand = new Command("analyze")
 			const projectName = config.project?.name ?? path.basename(projectRoot);
 			const projectId = config.project?.id;
 
-			// Check for Supabase config
-			const supabaseUrl = process.env.PERCEO_SUPABASE_URL;
-			const supabaseKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY || process.env.PERCEO_SUPABASE_ANON_KEY;
-
-			if (!supabaseUrl || !supabaseKey) {
-				spinner.fail("Supabase not configured");
-				console.error(chalk.red("\nSet PERCEO_SUPABASE_URL and PERCEO_SUPABASE_ANON_KEY environment variables."));
-				process.exit(1);
-			}
+			// Use embedded Perceo Cloud credentials
+			const supabaseUrl = getSupabaseUrl();
+			const supabaseKey = getSupabaseAnonKey();
 
 			if (!projectId) {
 				spinner.fail("Project not initialized");

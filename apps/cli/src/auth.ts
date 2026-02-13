@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { getSupabaseAnonKey } from "@perceo/supabase";
 
 export type AuthScope = "project" | "global";
 
@@ -108,4 +110,36 @@ export async function getEffectiveAuth(projectDir: string = process.cwd()): Prom
 	const projectAuth = await getStoredAuth("project", projectDir);
 	if (projectAuth?.access_token) return projectAuth;
 	return getStoredAuth("global");
+}
+
+/**
+ * Create an authenticated Supabase client using stored auth credentials.
+ * Returns null if user is not logged in.
+ * 
+ * This client automatically uses the embedded Perceo Cloud credentials
+ * and the user's authentication tokens from local storage.
+ */
+export async function getAuthenticatedSupabaseClient(projectDir?: string): Promise<SupabaseClient | null> {
+	const auth = await getEffectiveAuth(projectDir);
+	if (!auth) return null;
+
+	const supabase = createClient(auth.supabaseUrl, getSupabaseAnonKey(), {
+		auth: {
+			autoRefreshToken: true,
+			persistSession: false,
+		},
+	});
+
+	// Set the user's session
+	const { error } = await supabase.auth.setSession({
+		access_token: auth.access_token,
+		refresh_token: auth.refresh_token,
+	});
+
+	if (error) {
+		console.error("Failed to restore auth session:", error.message);
+		return null;
+	}
+
+	return supabase;
 }
