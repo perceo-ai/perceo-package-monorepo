@@ -1,7 +1,8 @@
 # Multi-stage build for Perceo Temporal Worker
 
 # Stage 1: Build
-FROM node:20-alpine AS builder
+# Use Debian-based image (required by Temporal core-bridge native libs)
+FROM node:20 AS builder
 
 # Install pnpm and configure for better memory/resource usage
 RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
@@ -41,7 +42,8 @@ COPY packages/typescript-config ./packages/typescript-config
 RUN pnpm --filter @perceo/temporal-worker... build
 
 # Stage 2: Production
-FROM node:20-alpine AS runner
+# Use Debian-based image (required by Temporal core-bridge native libs)
+FROM node:20 AS runner
 
 # Install pnpm and configure for better memory/resource usage
 RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
