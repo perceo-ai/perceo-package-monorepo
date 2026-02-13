@@ -79,10 +79,10 @@ async function findPort(base: number): Promise<number> {
 
 export const loginCommand = new Command("login")
 	.description("Log in to Perceo using Supabase Auth (required before init)")
-	.option("-s, --scope <scope>", "Where to store the login: 'project' (this repo) or 'global' (all projects)", "project")
+	.option("-s, --scope <scope>", "Where to store the login: 'project' (this repo) or 'global' (all projects)", "global")
 	.option("-d, --dir <directory>", "Project directory (for project scope)", process.cwd())
 	.action(async (options: LoginOptions) => {
-		const scope = (options.scope?.toLowerCase() === "global" ? "global" : "project") as AuthScope;
+		const scope = (options.scope?.toLowerCase() === "project" ? "project" : "global") as AuthScope;
 		const projectDir = path.resolve(options.dir || process.cwd());
 
 		if (scope === "project") {

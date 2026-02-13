@@ -29,6 +29,9 @@ importers:
       '@perceo/supabase':
         specifier: workspace:*
         version: link:../../packages/supabase
+      '@supabase/supabase-js':
+        specifier: ^2.47.0
+        version: 2.95.3
       chalk:
         specifier: ^5.3.0
         version: 5.6.2
@@ -38,6 +41,9 @@ importers:
       ora:
         specifier: ^8.0.1
         version: 8.2.0
+      tweetnacl:
+        specifier: ^1.0.3
+        version: 1.0.3
     devDependencies:
       '@changesets/cli':
         specifier: ^2.29.8
@@ -3430,6 +3436,9 @@ packages:
   turbo@2.8.7:
     resolution: {integrity: sha512-RBLh5caMAu1kFdTK1jgH2gH/z+jFsvX5rGbhgJ9nlIAWXSvxlzwId05uDlBA1+pBd3wO/UaKYzaQZQBXDd7kcA==}
     hasBin: true
+
+  tweetnacl@1.0.3:
+    resolution: {integrity: sha512-6rt+RN7aOi1nGMyC4Xa5DdYiukl2UWCbcJft7YhxReBGQD7OAM8Pbxw6YMo4r2diNEA8FEmu32YOn9rhaiE5yw==}
 
   type-check@0.4.0:
     resolution: {integrity: sha512-XleUoc9uwGXqjWwXaUTZAmzMcFZ5858QA2vvx1Ur5xIcixXIP+8LnFDgRplU30us6teqdlskFfu+ae4K79Ooew==}
@@ -7480,6 +7489,8 @@ snapshots:
       turbo-linux-arm64: 2.8.7
       turbo-windows-64: 2.8.7
       turbo-windows-arm64: 2.8.7
+
+  tweetnacl@1.0.3: {}
 
   type-check@0.4.0:
     dependencies:

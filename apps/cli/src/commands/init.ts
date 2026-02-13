@@ -5,12 +5,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { isLoggedIn } from "../auth.js";
 import { PerceoDataClient, type FlowInsert, type ApiKeyScope, getSupabaseUrl, getSupabaseAnonKey } from "@perceo/supabase";
-import { detectGitHubRemote, authorizeGitHub, createRepositorySecret, checkRepositoryPermissions } from "../github.js";
+import { detectGitHubRemote, isGitRepository, authorizeGitHub, createRepositorySecret, checkRepositoryPermissions } from "../github.js";
 import { createInterface } from "node:readline";
+import os from "node:os";
 
 type InitOptions = {
 	dir: string;
 	skipGithub: boolean;
+	yes: boolean;
 };
 
 type PackageJson = {
@@ -22,25 +24,51 @@ type PackageJson = {
 const CONFIG_DIR = ".perceo";
 const CONFIG_FILE = "config.json";
 
+/** Frameworks we support for now (React/website). More will be added later. */
+const SUPPORTED_FRAMEWORKS = ["nextjs", "react", "remix"];
+
 export const initCommand = new Command("init")
 	.description("Initialize Perceo in your project and discover flows")
 	.option("-d, --dir <directory>", "Project directory", process.cwd())
 	.option("--skip-github", "Skip GitHub Actions setup", false)
+	.option("-y, --yes", "Skip confirmation prompt (e.g. for CI)", false)
 	.action(async (options: InitOptions) => {
 		const projectDir = path.resolve(options.dir || process.cwd());
 
 		const loggedIn = await isLoggedIn(projectDir);
 		if (!loggedIn) {
-			console.error(
-				chalk.red("You must log in first. Run ") +
-					chalk.cyan("perceo login") +
-					chalk.red(" (or ") +
-					chalk.cyan("perceo login --scope global") +
-					chalk.red("), then run ") +
-					chalk.cyan("perceo init") +
-					chalk.red(" again."),
-			);
+			console.error(chalk.red("You must log in first. Run ") + chalk.cyan("perceo login") + chalk.red(", then run ") + chalk.cyan("perceo init") + chalk.red(" again."));
 			process.exit(1);
+		}
+
+		// Confirm directory so users don't accidentally init in home or wrong repo
+		if (!options.yes) {
+			const isGit = isGitRepository(projectDir);
+			const remote = detectGitHubRemote(projectDir);
+			const isHomeDir = projectDir === os.homedir();
+			console.log(chalk.bold("Initialize Perceo in this directory?"));
+			console.log(chalk.gray("  Directory:   ") + chalk.cyan(projectDir));
+			if (remote) {
+				console.log(chalk.gray("  Repository:  ") + chalk.cyan(`${remote.owner}/${remote.repo}`));
+			} else if (isGit) {
+				console.log(chalk.gray("  Repository:  ") + chalk.yellow("Git repository (no GitHub remote)"));
+			} else {
+				console.log(chalk.gray("  Repository:  ") + chalk.yellow("Not a git repository"));
+			}
+			if (isHomeDir) {
+				console.log(chalk.yellow("  Warning: This is your home directory. Prefer running from a project directory."));
+			}
+			const rl = createInterface({ input: process.stdin, output: process.stdout });
+			const answer = await new Promise<string>((resolve) => {
+				rl.question(chalk.bold("Continue? [y/N]: "), (ans) => {
+					rl.close();
+					resolve((ans || "n").trim().toLowerCase());
+				});
+			});
+			if (answer !== "y" && answer !== "yes") {
+				console.log(chalk.gray("Init cancelled."));
+				process.exit(0);
+			}
 		}
 
 		const spinner = ora(`Initializing Perceo in ${chalk.cyan(projectDir)}...`).start();
@@ -49,6 +77,14 @@ export const initCommand = new Command("init")
 			const pkg = await readPackageJson(projectDir);
 			const projectName = pkg?.name || path.basename(projectDir);
 			const framework = await detectFramework(projectDir, pkg);
+
+			if (!SUPPORTED_FRAMEWORKS.includes(framework)) {
+				spinner.fail("Unsupported project type");
+				const detected = framework === "unknown" ? "No React/Next.js/Remix project detected" : `Detected: ${framework}`;
+				console.error(chalk.red(detected + "."));
+				console.error(chalk.yellow("Perceo currently supports React, Next.js, and Remix projects. Support for more frameworks is coming soon."));
+				process.exit(1);
+			}
 
 			const perceoDir = path.join(projectDir, CONFIG_DIR);
 			const perceoConfigPath = path.join(perceoDir, CONFIG_FILE);
@@ -83,45 +119,54 @@ export const initCommand = new Command("init")
 			spinner.text = "Discovering flows from codebase...";
 			const discoveredFlows = await discoverFlows(projectDir, framework);
 			flowsDiscovered = discoveredFlows.length;
+			if (flowsDiscovered === 0) {
+				spinner.text = "Discovering flows from codebase... " + chalk.gray("(0 flows found)");
+			} else {
+				spinner.text = `Discovering flows from codebase... ${chalk.gray(`(${flowsDiscovered} flow(s) found)`)}`;
+			}
 
 			// Check existing flows
+			spinner.text = "Loading existing flows from project...";
 			const existingFlows = await client.getFlows(projectId);
-			const existingNames = new Set(existingFlows.map(f => f.name));
+			const existingNames = new Set(existingFlows.map((f) => f.name));
+			spinner.text = existingFlows.length > 0 ? `Loading existing flows... ${chalk.gray(`(${existingFlows.length} existing)`)}` : "Saving flows to Supabase...";
 
-			// Prepare flows for upsert
-			const flowsToUpsert: FlowInsert[] = discoveredFlows.map(flow => ({
+			// Prepare flows for upsert (include required FlowInsert fields)
+			const flowsToUpsert: FlowInsert[] = discoveredFlows.map((flow) => ({
 				project_id: projectId!,
+				persona_id: null,
 				name: flow.name,
 				description: flow.description,
 				priority: flow.priority as "critical" | "high" | "medium" | "low",
-				entry_point: flow.entryPoint,
+				entry_point: flow.entryPoint ?? null,
 				graph_data: {
-					components: flow.components,
-					pages: flow.pages,
+					components: flow.components ?? [],
+					pages: flow.pages ?? [],
 				},
+				coverage_score: null,
+				is_active: true,
 			}));
 
 			// Upsert flows to Supabase
 			spinner.text = "Saving flows to Supabase...";
-			await client.upsertFlows(flowsToUpsert);
-
-			flowsNew = discoveredFlows.filter(f => !existingNames.has(f.name)).length;
+			if (flowsToUpsert.length > 0) {
+				await client.upsertFlows(flowsToUpsert);
+				flowsNew = discoveredFlows.filter((f) => !existingNames.has(f.name)).length;
+				spinner.text = `Saving flows to Supabase... ${chalk.gray(`(${flowsToUpsert.length} saved: ${flowsNew} new, ${flowsToUpsert.length - flowsNew} updated)`)}`;
+			} else {
+				flowsNew = 0;
+				spinner.text = "Saving flows to Supabase... " + chalk.gray("(none to save)");
+			}
 
 			// Generate API key and GitHub Actions workflow
 			let apiKey: string | null = null;
 			let workflowCreated = false;
 			let githubAutoConfigured = false;
-			
+
 			if (projectId && !options.skipGithub) {
 				spinner.text = "Generating CI API key...";
-				
-				const scopes: ApiKeyScope[] = [
-					"ci:analyze",
-					"ci:test",
-					"flows:read",
-					"insights:read",
-					"events:publish",
-				];
+
+				const scopes: ApiKeyScope[] = ["ci:analyze", "ci:test", "flows:read", "insights:read", "events:publish"];
 
 				try {
 					const { key } = await client.createApiKey(projectId, {
@@ -132,47 +177,34 @@ export const initCommand = new Command("init")
 
 					// Detect GitHub remote
 					const remote = detectGitHubRemote(projectDir);
-					
+
 					if (remote) {
 						spinner.stop();
 						console.log(chalk.cyan(`\n📦 Detected GitHub repository: ${remote.owner}/${remote.repo}`));
-						
+
 						const rl = createInterface({ input: process.stdin, output: process.stdout });
 						const answer = await new Promise<string>((resolve) => {
-							rl.question(
-								chalk.bold("Auto-configure GitHub Actions? (Y/n): "),
-								(ans) => {
-									rl.close();
-									resolve((ans || "y").toLowerCase());
-								}
-							);
+							rl.question(chalk.bold("Auto-configure GitHub Actions? (Y/n): "), (ans) => {
+								rl.close();
+								resolve((ans || "y").toLowerCase());
+							});
 						});
 
 						if (answer === "y" || answer === "yes" || answer === "") {
 							try {
 								spinner.start("Authorizing with GitHub...");
 								const ghAuth = await authorizeGitHub();
-								
+
 								spinner.text = "Checking repository permissions...";
-								const hasPermission = await checkRepositoryPermissions(
-									ghAuth.accessToken,
-									remote.owner,
-									remote.repo
-								);
-								
+								const hasPermission = await checkRepositoryPermissions(ghAuth.accessToken, remote.owner, remote.repo);
+
 								if (!hasPermission) {
 									spinner.warn("Insufficient permissions to write to repository");
 									console.log(chalk.yellow("  You need admin or push access to configure secrets automatically."));
 								} else {
 									spinner.text = "Creating PERCEO_API_KEY secret...";
-									await createRepositorySecret(
-										ghAuth.accessToken,
-										remote.owner,
-										remote.repo,
-										"PERCEO_API_KEY",
-										apiKey
-									);
-									
+									await createRepositorySecret(ghAuth.accessToken, remote.owner, remote.repo, "PERCEO_API_KEY", apiKey);
+
 									githubAutoConfigured = true;
 									spinner.text = "Creating GitHub Actions workflow...";
 								}
@@ -182,7 +214,7 @@ export const initCommand = new Command("init")
 								console.log(chalk.gray("  Continuing with manual setup instructions..."));
 							}
 						}
-						
+
 						if (!githubAutoConfigured) {
 							spinner.start("Creating GitHub Actions workflow...");
 						}
@@ -195,7 +227,7 @@ export const initCommand = new Command("init")
 					const workflowPath = path.join(workflowDir, "perceo.yml");
 
 					await fs.mkdir(workflowDir, { recursive: true });
-					
+
 					if (!(await fileExists(workflowPath))) {
 						const workflowContent = generateGitHubWorkflow();
 						await fs.writeFile(workflowPath, workflowContent, "utf8");
@@ -301,19 +333,19 @@ async function discoverFlows(projectRoot: string, framework: string): Promise<Di
 
 	// Framework-specific discovery
 	if (framework === "nextjs") {
-		flows.push(...await discoverNextJsFlows(projectRoot));
+		flows.push(...(await discoverNextJsFlows(projectRoot)));
 	} else if (framework === "react") {
-		flows.push(...await discoverReactFlows(projectRoot));
+		flows.push(...(await discoverReactFlows(projectRoot)));
 	} else {
-		flows.push(...await discoverGenericFlows(projectRoot));
+		flows.push(...(await discoverGenericFlows(projectRoot)));
 	}
 
 	// Always add common flows if patterns exist
-	flows.push(...await discoverCommonFlows(projectRoot));
+	flows.push(...(await discoverCommonFlows(projectRoot)));
 
 	// Deduplicate by name
 	const seen = new Set<string>();
-	return flows.filter(f => {
+	return flows.filter((f) => {
 		if (seen.has(f.name)) return false;
 		seen.add(f.name);
 		return true;
@@ -351,7 +383,7 @@ async function discoverNextJsFlows(projectRoot: string): Promise<DiscoveredFlow[
 			const pages = await findNextJsPages(dir);
 			for (const page of pages) {
 				const flowName = pagePathToFlowName(page.route);
-				if (!flows.some(f => f.name === flowName)) {
+				if (!flows.some((f) => f.name === flowName)) {
 					flows.push({
 						name: flowName,
 						description: `User flow for ${page.route}`,
@@ -423,10 +455,10 @@ async function discoverCommonFlows(projectRoot: string): Promise<DiscoveredFlow[
 	for (const dir of [srcDir, appDir]) {
 		if (await dirExists(dir)) {
 			const files = await walkDir(dir, 3);
-			
+
 			for (const { pattern, name, priority } of commonPatterns) {
-				const matchingFile = files.find(f => pattern.test(f));
-				if (matchingFile && !flows.some(f => f.name === name)) {
+				const matchingFile = files.find((f) => pattern.test(f));
+				if (matchingFile && !flows.some((f) => f.name === name)) {
 					flows.push({
 						name,
 						description: `${name} user flow`,
@@ -447,20 +479,18 @@ async function discoverCommonFlows(projectRoot: string): Promise<DiscoveredFlow[
 
 async function findNextJsAppPages(appDir: string): Promise<{ route: string; file: string }[]> {
 	const pages: { route: string; file: string }[] = [];
-	
+
 	async function scan(dir: string, route: string): Promise<void> {
 		const entries = await fs.readdir(dir, { withFileTypes: true });
-		
+
 		for (const entry of entries) {
 			const fullPath = path.join(dir, entry.name);
-			
+
 			if (entry.isDirectory()) {
 				if (entry.name.startsWith("_") || entry.name === "api") continue;
-				
-				const newRoute = entry.name.startsWith("(") 
-					? route 
-					: `${route}/${entry.name}`;
-				
+
+				const newRoute = entry.name.startsWith("(") ? route : `${route}/${entry.name}`;
+
 				await scan(fullPath, newRoute);
 			} else if (entry.name === "page.tsx" || entry.name === "page.js") {
 				pages.push({
@@ -477,13 +507,13 @@ async function findNextJsAppPages(appDir: string): Promise<{ route: string; file
 
 async function findNextJsPages(pagesDir: string): Promise<{ route: string; file: string }[]> {
 	const pages: { route: string; file: string }[] = [];
-	
+
 	async function scan(dir: string, route: string): Promise<void> {
 		const entries = await fs.readdir(dir, { withFileTypes: true });
-		
+
 		for (const entry of entries) {
 			const fullPath = path.join(dir, entry.name);
-			
+
 			if (entry.isDirectory()) {
 				if (entry.name === "api" || entry.name.startsWith("_")) continue;
 				await scan(fullPath, `${route}/${entry.name}`);
@@ -505,29 +535,29 @@ async function findNextJsPages(pagesDir: string): Promise<{ route: string; file:
 async function findReactComponents(dir: string): Promise<string[]> {
 	const components: string[] = [];
 	const entries = await fs.readdir(dir, { withFileTypes: true });
-	
+
 	for (const entry of entries) {
 		if (entry.isFile() && /\.(tsx?|jsx?)$/.test(entry.name)) {
 			components.push(path.join(dir, entry.name));
 		}
 	}
-	
+
 	return components;
 }
 
 async function walkDir(dir: string, maxDepth: number, currentDepth: number = 0): Promise<string[]> {
 	if (currentDepth >= maxDepth) return [];
-	
+
 	const files: string[] = [];
-	
+
 	try {
 		const entries = await fs.readdir(dir, { withFileTypes: true });
-		
+
 		for (const entry of entries) {
 			const fullPath = path.join(dir, entry.name);
-			
+
 			if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules") {
-				files.push(...await walkDir(fullPath, maxDepth, currentDepth + 1));
+				files.push(...(await walkDir(fullPath, maxDepth, currentDepth + 1)));
 			} else if (entry.isFile()) {
 				files.push(fullPath);
 			}
@@ -535,7 +565,7 @@ async function walkDir(dir: string, maxDepth: number, currentDepth: number = 0):
 	} catch {
 		// Ignore permission errors
 	}
-	
+
 	return files;
 }
 
@@ -545,13 +575,15 @@ async function walkDir(dir: string, maxDepth: number, currentDepth: number = 0):
 
 function pagePathToFlowName(route: string): string {
 	if (route === "/" || route === "") return "Homepage";
-	
+
 	const parts = route.split("/").filter(Boolean);
-	return parts
-		.map(p => p.replace(/^\[.*\]$/, "").replace(/-/g, " "))
-		.filter(Boolean)
-		.map(p => p.charAt(0).toUpperCase() + p.slice(1))
-		.join(" ") || "Page";
+	return (
+		parts
+			.map((p) => p.replace(/^\[.*\]$/, "").replace(/-/g, " "))
+			.filter(Boolean)
+			.map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+			.join(" ") || "Page"
+	);
 }
 
 function componentToFlowName(name: string): string {
@@ -560,7 +592,7 @@ function componentToFlowName(name: string): string {
 		.replace(/[-_]/g, " ")
 		.trim()
 		.split(" ")
-		.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+		.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
 		.join(" ");
 }
 

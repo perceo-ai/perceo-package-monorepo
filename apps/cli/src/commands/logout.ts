@@ -11,10 +11,10 @@ type LogoutOptions = {
 
 export const logoutCommand = new Command("logout")
 	.description("Log out from Perceo (remove stored auth for the given scope)")
-	.option("-s, --scope <scope>", "Which login to remove: 'project' or 'global'", "project")
+	.option("-s, --scope <scope>", "Which login to remove: 'project' or 'global'", "global")
 	.option("-d, --dir <directory>", "Project directory (for project scope)", process.cwd())
 	.action(async (options: LogoutOptions) => {
-		const scope = (options.scope?.toLowerCase() === "global" ? "global" : "project") as AuthScope;
+		const scope = (options.scope?.toLowerCase() === "project" ? "project" : "global") as AuthScope;
 		const projectDir = path.resolve(options.dir || process.cwd());
 
 		const existing = await getStoredAuth(scope, scope === "project" ? projectDir : undefined);

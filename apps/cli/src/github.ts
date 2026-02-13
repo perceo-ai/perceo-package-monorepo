@@ -26,9 +26,7 @@ export interface GitHubRemote {
  */
 export async function authorizeGitHub(): Promise<GitHubAuth> {
 	if (!GITHUB_CLIENT_ID) {
-		throw new Error(
-			"GitHub OAuth client ID not configured. Set PERCEO_GITHUB_CLIENT_ID environment variable."
-		);
+		throw new Error("GitHub OAuth client ID not configured. Set PERCEO_GITHUB_CLIENT_ID environment variable.");
 	}
 
 	const spinner = ora("Requesting device authorization...").start();
@@ -52,13 +50,7 @@ export async function authorizeGitHub(): Promise<GitHubAuth> {
 	}
 
 	const deviceData = await deviceResponse.json();
-	const {
-		device_code,
-		user_code,
-		verification_uri,
-		expires_in,
-		interval = 5,
-	} = deviceData;
+	const { device_code, user_code, verification_uri, expires_in, interval = 5 } = deviceData;
 
 	spinner.succeed("Device code received");
 
@@ -123,24 +115,15 @@ export async function authorizeGitHub(): Promise<GitHubAuth> {
  * Create or update a repository secret using the GitHub API.
  * The secret is encrypted before being sent to GitHub.
  */
-export async function createRepositorySecret(
-	token: string,
-	owner: string,
-	repo: string,
-	secretName: string,
-	secretValue: string
-): Promise<void> {
+export async function createRepositorySecret(token: string, owner: string, repo: string, secretName: string, secretValue: string): Promise<void> {
 	// Step 1: Get the repository's public key for encrypting secrets
-	const keyResponse = await fetch(
-		`https://api.github.com/repos/${owner}/${repo}/actions/secrets/public-key`,
-		{
-			headers: {
-				Authorization: `Bearer ${token}`,
-				Accept: "application/vnd.github+json",
-				"X-GitHub-Api-Version": "2022-11-28",
-			},
-		}
-	);
+	const keyResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/secrets/public-key`, {
+		headers: {
+			Authorization: `Bearer ${token}`,
+			Accept: "application/vnd.github+json",
+			"X-GitHub-Api-Version": "2022-11-28",
+		},
+	});
 
 	if (!keyResponse.ok) {
 		const error = await keyResponse.text();
@@ -153,22 +136,19 @@ export async function createRepositorySecret(
 	const encryptedValue = await encryptSecret(secretValue, publicKey);
 
 	// Step 3: Create or update the secret
-	const secretResponse = await fetch(
-		`https://api.github.com/repos/${owner}/${repo}/actions/secrets/${secretName}`,
-		{
-			method: "PUT",
-			headers: {
-				Authorization: `Bearer ${token}`,
-				Accept: "application/vnd.github+json",
-				"X-GitHub-Api-Version": "2022-11-28",
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({
-				encrypted_value: encryptedValue,
-				key_id: keyId,
-			}),
-		}
-	);
+	const secretResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/secrets/${secretName}`, {
+		method: "PUT",
+		headers: {
+			Authorization: `Bearer ${token}`,
+			Accept: "application/vnd.github+json",
+			"X-GitHub-Api-Version": "2022-11-28",
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			encrypted_value: encryptedValue,
+			key_id: keyId,
+		}),
+	});
 
 	if (!secretResponse.ok) {
 		const error = await secretResponse.text();
@@ -184,105 +164,133 @@ async function encryptSecret(secretValue: string, publicKeyBase64: string): Prom
 	// GitHub uses libsodium sealed boxes for secret encryption
 	// We need to use the same algorithm - this requires sodium-native or tweetnacl
 	// For now, we'll use a Node.js native approach with Web Crypto API
-	
+
 	try {
 		// Import the public key
 		const publicKeyBuffer = Buffer.from(publicKeyBase64, "base64");
-		
+
 		// For GitHub Actions secrets, we need to use libsodium's crypto_box_seal
 		// This is not directly available in Node.js crypto, so we'll use tweetnacl
 		// which is a pure JS implementation
 		const sodium = await import("tweetnacl");
 		const { box, randomBytes } = sodium.default;
-		
+
 		// Convert strings to Uint8Array
 		const messageBytes = new TextEncoder().encode(secretValue);
 		const publicKeyBytes = new Uint8Array(publicKeyBuffer);
-		
+
 		// crypto_box_seal is a sealed box: anonymously send messages to a recipient
 		// It's crypto_box with an ephemeral keypair
 		const ephemeralKeyPair = box.keyPair();
 		const nonce = randomBytes(box.nonceLength);
 		const encrypted = box(messageBytes, nonce, publicKeyBytes, ephemeralKeyPair.secretKey);
-		
+
 		// Combine ephemeral public key + nonce + ciphertext
 		const combined = new Uint8Array(ephemeralKeyPair.publicKey.length + nonce.length + encrypted.length);
 		combined.set(ephemeralKeyPair.publicKey);
 		combined.set(nonce, ephemeralKeyPair.publicKey.length);
 		combined.set(encrypted, ephemeralKeyPair.publicKey.length + nonce.length);
-		
+
 		return Buffer.from(combined).toString("base64");
 	} catch (error) {
-		throw new Error(
-			`Failed to encrypt secret. Install tweetnacl: npm install tweetnacl\n` +
-			`Error: ${error instanceof Error ? error.message : String(error)}`
-		);
+		throw new Error(`Failed to encrypt secret. Install tweetnacl: npm install tweetnacl\n` + `Error: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
 /**
- * Detect GitHub repository information from git remote.
- * Parses the origin remote to extract owner and repo name.
+ * Check if the given directory is inside a git repository.
+ */
+export function isGitRepository(projectDir: string): boolean {
+	try {
+		execSync("git rev-parse --is-inside-work-tree", {
+			cwd: projectDir,
+			encoding: "utf8",
+			stdio: ["pipe", "pipe", "ignore"],
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Parse a git remote URL and return GitHub owner/repo if it's a GitHub URL.
+ */
+function parseGitHubRemoteUrl(url: string): GitHubRemote | null {
+	// Parse various GitHub URL formats:
+	// - https://github.com/owner/repo.git
+	// - git@github.com:owner/repo.git
+	// - ssh://git@github.com/owner/repo.git
+
+	let match = url.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
+	if (match && match[1] && match[2]) {
+		return { owner: match[1], repo: match[2] };
+	}
+	match = url.match(/git@github\.com:([\w-]+)\/([\w.-]+?)(\.git)?$/);
+	if (match && match[1] && match[2]) {
+		return { owner: match[1], repo: match[2] };
+	}
+	return null;
+}
+
+/**
+ * Detect GitHub repository information from git remote(s).
+ * Tries "origin" first, then any other remote with a GitHub URL.
  */
 export function detectGitHubRemote(projectDir: string): GitHubRemote | null {
+	if (!isGitRepository(projectDir)) {
+		return null;
+	}
+
 	try {
-		const remote = execSync("git remote get-url origin", {
+		// Try origin first (most common)
+		const origin = execSync("git remote get-url origin", {
 			cwd: projectDir,
 			encoding: "utf8",
 			stdio: ["pipe", "pipe", "ignore"],
 		}).trim();
-
-		// Parse various GitHub URL formats:
-		// - https://github.com/owner/repo.git
-		// - git@github.com:owner/repo.git
-		// - ssh://git@github.com/owner/repo.git
-
-		let match: RegExpMatchArray | null = null;
-
-		// HTTPS format
-		match = remote.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
-		if (match) {
-			return {
-				owner: match[1],
-				repo: match[2],
-			};
-		}
-
-		// SSH format (git@github.com:owner/repo.git)
-		match = remote.match(/git@github\.com:([\w-]+)\/([\w.-]+?)(\.git)?$/);
-		if (match) {
-			return {
-				owner: match[1],
-				repo: match[2],
-			};
-		}
-
-		return null;
+		const parsed = parseGitHubRemoteUrl(origin);
+		if (parsed) return parsed;
 	} catch {
-		// Not a git repo or no remote configured
-		return null;
+		// No origin or origin not GitHub — try all remotes
 	}
+
+	try {
+		// git remote -v outputs: remoteName\turl (fetch)\n remoteName\turl (push)
+		const out = execSync("git remote -v", {
+			cwd: projectDir,
+			encoding: "utf8",
+			stdio: ["pipe", "pipe", "ignore"],
+		});
+		for (const line of out.split("\n")) {
+			const tab = line.indexOf("\t");
+			if (tab === -1) continue;
+			const url = line
+				.slice(tab + 1)
+				.replace(/\s*\((?:fetch|push)\)\s*$/, "")
+				.trim();
+			const parsed = parseGitHubRemoteUrl(url);
+			if (parsed) return parsed;
+		}
+	} catch {
+		// Ignore
+	}
+
+	return null;
 }
 
 /**
  * Check if user has permission to write to the repository.
  */
-export async function checkRepositoryPermissions(
-	token: string,
-	owner: string,
-	repo: string
-): Promise<boolean> {
+export async function checkRepositoryPermissions(token: string, owner: string, repo: string): Promise<boolean> {
 	try {
-		const response = await fetch(
-			`https://api.github.com/repos/${owner}/${repo}`,
-			{
-				headers: {
-					Authorization: `Bearer ${token}`,
-					Accept: "application/vnd.github+json",
-					"X-GitHub-Api-Version": "2022-11-28",
-				},
-			}
-		);
+		const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+			headers: {
+				Authorization: `Bearer ${token}`,
+				Accept: "application/vnd.github+json",
+				"X-GitHub-Api-Version": "2022-11-28",
+			},
+		});
 
 		if (!response.ok) {
 			return false;

@@ -4,12 +4,9 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 export * from "./types.js";
 export * from "./client.js";
 
-const DEFAULT_SUPABASE_URL = "https://perceo.supabase.co";
+const DEFAULT_SUPABASE_URL = "https://lygslnolucoidnhaitdn.supabase.co";
 
-// TODO: Replace with actual Perceo Cloud anon key from Supabase dashboard
-// This key is safe to embed - it's protected by Row Level Security (RLS)
-// Get it from: https://supabase.com/dashboard/project/YOUR_PROJECT/settings/api
-const DEFAULT_SUPABASE_ANON_KEY = process.env.PERCEO_SUPABASE_ANON_KEY || "";
+const DEFAULT_SUPABASE_ANON_KEY = process.env.PERCEO_SUPABASE_ANON_KEY || "sb_publishable_8Wj8bSM7drJH6mXp6NM7SQ_GcyE9pZb";
 
 /**
  * Session data returned from magic-link auth flow.
@@ -31,9 +28,7 @@ export function getSupabaseAnonKey(): string {
 	const key = process.env.PERCEO_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
 	if (!key) {
 		throw new Error(
-			"PERCEO_SUPABASE_ANON_KEY is not configured. " +
-			"This should be embedded in the package for Perceo Cloud users. " +
-			"For self-hosted, set PERCEO_SUPABASE_ANON_KEY environment variable."
+			"PERCEO_SUPABASE_ANON_KEY is not configured. " + "This should be embedded in the package for Perceo Cloud users. " + "For self-hosted, set PERCEO_SUPABASE_ANON_KEY environment variable.",
 		);
 	}
 	return key;
