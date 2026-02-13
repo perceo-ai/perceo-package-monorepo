@@ -158,7 +158,13 @@ gcloud run deploy perceo-temporal-worker \
   --max-instances 10 \
   --memory 512Mi \
   --cpu 1 \
-  --allow-unauthenticated
+  --allow-unauthenticated \
+  --set-env-vars PERCEO_TEMPORAL_API_KEY="${PERCEO_TEMPORAL_API_KEY}" \
+  --set-env-vars PERCEO_TEMPORAL_NAMESPACE="${PERCEO_TEMPORAL_NAMESPACE}" \
+  --set-env-vars PERCEO_TEMPORAL_ENABLED="${PERCEO_TEMPORAL_ENABLED}" \
+  --set-env-vars PERCEO_TEMPORAL_TASK_QUEUE="${PERCEO_TEMPORAL_TASK_QUEUE}" \
+  --set-env-vars PERCEO_TEMPORAL_REGIONAL_ENDPOINT="${PERCEO_TEMPORAL_REGIONAL_ENDPOINT}" \
+  --set-annotations run.googleapis.com/cpu-throttling='false'
 
 echo "Deployment complete. Worker will connect to Temporal Cloud using PERCEO_* env vars."
 echo "Ensure PERCEO_TEMPORAL_ADDRESS, PERCEO_TEMPORAL_NAMESPACE, and TLS certs are configured."
