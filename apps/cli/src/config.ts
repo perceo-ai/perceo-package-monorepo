@@ -34,23 +34,39 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Perce
 	const envPath = process.env.PERCEO_CONFIG_PATH;
 	const baseConfigPath = envPath ? resolveMaybeRelativePath(envPath, projectDir) : path.join(projectDir, CONFIG_DIR, BASE_CONFIG_FILE);
 
-	const baseConfig = await readJsonFile(baseConfigPath);
+	let baseConfig = await readJsonFile(baseConfigPath);
 
 	const isLocalEnv = (process.env.PERCEO_ENV || "").toLowerCase() === "local" || process.env.NODE_ENV === "development";
 
-	if (!isLocalEnv) {
-		return baseConfig;
+	if (isLocalEnv) {
+		// Local overrides are optional; if they don't exist just use baseConfig.
+		const localConfigPath = path.join(projectDir, CONFIG_DIR, LOCAL_CONFIG_FILE);
+		const localExists = await fileExists(localConfigPath);
+		if (localExists) {
+			const localConfig = await readJsonFile(localConfigPath);
+			baseConfig = deepMerge(baseConfig, localConfig);
+		}
 	}
 
-	// Local overrides are optional; if they don't exist just return baseConfig.
-	const localConfigPath = path.join(projectDir, CONFIG_DIR, LOCAL_CONFIG_FILE);
-	const localExists = await fileExists(localConfigPath);
-	if (!localExists) {
-		return baseConfig;
+	// Inject Temporal config from environment variables
+	if (process.env.PERCEO_TEMPORAL_ENABLED === 'true') {
+		baseConfig.temporal = {
+			enabled: true,
+			address: process.env.PERCEO_TEMPORAL_ADDRESS || 'localhost:7233',
+			namespace: process.env.PERCEO_TEMPORAL_NAMESPACE || 'perceo',
+			taskQueue: process.env.PERCEO_TEMPORAL_TASK_QUEUE || 'observer-engine',
+		};
+
+		// Add TLS config if cert path is provided
+		if (process.env.PERCEO_TEMPORAL_TLS_CERT_PATH) {
+			baseConfig.temporal.tls = {
+				certPath: process.env.PERCEO_TEMPORAL_TLS_CERT_PATH,
+				keyPath: process.env.PERCEO_TEMPORAL_TLS_KEY_PATH || '',
+			};
+		}
 	}
 
-	const localConfig = await readJsonFile(localConfigPath);
-	return deepMerge(baseConfig, localConfig);
+	return baseConfig;
 }
 
 async function readJsonFile<T = any>(filePath: string): Promise<T> {

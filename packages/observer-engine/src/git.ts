@@ -15,7 +15,9 @@ export async function computeChangeAnalysis(projectRoot: string, baseSha: string
 		.map((line) => line.trim())
 		.filter((line) => line.length > 0)
 		.map((line) => {
-			const [status, filePath] = line.split(/\s+/, 2);
+			const parts = line.split(/\s+/);
+			const status = parts[0] ?? "M";
+			const filePath = parts[1] ?? "";
 			return {
 				path: normalizePath(filePath),
 				status: mapStatus(status),

@@ -1,441 +1,342 @@
 ## Perceo CLI Deployment Guide
 
-**Version:** 1.0  
+**Version:** 2.0  
 **Date:** February 12, 2026  
-**Status:** Deployment Runbook (Local, Staging, Production)
+**Status:** Zero-Config Deployment (embedded credentials, automatic CI setup)
 
 ---
 
 ### 1. Overview
 
-This guide explains how to deploy all components that the Perceo CLI expects to exist in a real environment:
+This guide explains how to deploy the Perceo CLI with **zero configuration required**. The CLI now has **embedded Perceo Cloud credentials** and can **automatically configure GitHub Actions** via OAuth.
 
-- **Perceo CLI** (`@perceo/perceo`)
-- **Observer Engine APIs** (bootstrap + change analysis)
-- **Analyzer / Analytics / Coordinator APIs**
-- **Flow Graph database (Neo4j)**
-- **Event bus (Redis)**
-- **External analytics providers (GA4, Mixpanel, Amplitude)**
+**For 99% of users: No environment variables needed.**
 
-Architecture and data-flow details live in:
+Components involved:
 
-- `[docs/cli_architecture.md](./cli_architecture.md)`
-- `[docs/cli_managed_services.md](./cli_managed_services.md)`
+- **Perceo CLI** (`@perceo/perceo`) — runs in your app repo and in CI with embedded credentials.
+- **Perceo Cloud**: Managed Supabase backend (embedded), Flow discovery, Change analysis.
+- **GitHub Actions**: Automatically configured via GitHub OAuth (optional).
 
-This document focuses on **how to stand everything up** in practice.
+Architecture details: `[docs/cli_architecture.md](./cli_architecture.md)` and `[docs/cli_managed_services.md](./cli_managed_services.md)`.
 
 ---
 
-### 2. Environments and configuration model
+### 2. Zero-Config Quick Start
 
-Perceo uses a layered configuration model driven by:
+#### 2.1 Install and Login
 
-- `.perceo/config.json` – base config, checked into your app repo.
-- `.perceo/config.local.json` – optional local overrides, usually git‑ignored.
-- Environment variables – for secrets and environment-specific endpoints.
+```bash
+# Install CLI globally
+npm install -g @perceo/perceo
 
-Key env vars:
+# Login (uses embedded Perceo Cloud credentials)
+perceo login
 
-- `PERCEO_ENV=local|dev|staging|production`
-- `PERCEO_CONFIG_PATH=/absolute/or/relative/path/to/config.json`
+# Initialize your project
+perceo init
+```
 
-Resolution rules (implemented by the CLI):
+That's it! The CLI will:
+1. ✅ Connect to Perceo Cloud (no env vars needed)
+2. ✅ Discover flows in your codebase
+3. ✅ Generate a CI API key
+4. ✅ Auto-configure GitHub Actions (with your permission)
 
-- CLI reads `.perceo/config.json` by default.
-- If `PERCEO_ENV=local` (or `NODE_ENV=development`) and `.perceo/config.local.json` exists, it is deep‑merged over the base config.
-- If `PERCEO_CONFIG_PATH` is set, that file is used instead of `.perceo/config.json`.
+#### 2.2 What Happens During Init
 
-You can keep **production endpoints** in `.perceo/config.json` (no secrets) and **local overrides + secrets paths** in `.perceo/config.local.json`.
+When you run `perceo init`, the CLI:
+
+1. **Connects to Perceo Cloud** using embedded credentials
+2. **Discovers flows** from your codebase structure
+3. **Creates a project** in Perceo Cloud
+4. **Generates a CI API key** for GitHub Actions
+5. **Detects your GitHub repository** from git remote
+6. **Asks permission** to auto-configure GitHub Actions
+7. **Authorizes via GitHub OAuth** (device flow - you authorize in browser)
+8. **Creates the `PERCEO_API_KEY` secret** in your GitHub repository
+9. **Generates `.github/workflows/perceo.yml`** workflow file
+10. **Done!** Just commit and push
+
+#### 2.3 Manual Setup (if auto-config is skipped)
+
+If you choose not to auto-configure GitHub, you'll need to:
+
+1. Copy the displayed `PERCEO_API_KEY` value
+2. Add it as a GitHub secret: **Settings → Secrets and variables → Actions → New repository secret**
+3. Commit the generated `.github/workflows/perceo.yml` file
 
 ---
 
-### 3. Components to deploy
+### 3. Configuration Model
 
-#### 3.1 Flow Graph database (Neo4j)
+#### 3.1 What's Embedded vs Configurable
 
-**Purpose:**  
-Holds flows, personas, synthetic test results, production metrics, and analyzer insights.
+| What | Where | Notes |
+|------|-------|-------|
+| **Perceo Cloud URL** | Embedded in CLI | Override with `PERCEO_SUPABASE_URL` for self-hosted |
+| **Perceo Cloud Anon Key** | Embedded in CLI | Override with `PERCEO_SUPABASE_ANON_KEY` for self-hosted |
+| **User Auth Tokens** | `~/.perceo/auth.json` or `.perceo/auth.json` | Stored locally after `perceo login` |
+| **Project Config** | `.perceo/config.json` | Safe to commit (no secrets) |
+| **CI API Key** | GitHub Secrets (auto-created) | Project-scoped, managed via `perceo keys` |
 
-**Used by:** Observer, Analyzer, Analytics, Coordinator, Dashboard.
+#### 3.2 Environment Variables (Only for Advanced Use Cases)
 
-Config section (simplified):
+**Most users don't need any environment variables.** These are only for self-hosted or advanced configurations:
 
-```jsonc
-{
-	"flowGraph": {
-		"endpoint": "neo4j+s://<host>:7687",
-		"database": "Perceo",
-		"username": "perceo_app",
-		"password": "${PERCEO_NEO4J_PASSWORD}",
-	},
-}
-```
+**Self-Hosted Perceo (Override Embedded Credentials)**
 
-Deployment options:
+| Variable | When Needed | Description |
+|----------|-------------|-------------|
+| `PERCEO_SUPABASE_URL` | Self-hosted only | Your Supabase instance URL |
+| `PERCEO_SUPABASE_ANON_KEY` | Self-hosted only | Your Supabase anon key |
+| `PERCEO_SUPABASE_SERVICE_ROLE_KEY` | Server-side operations | Service role key for admin operations |
 
-- **Local dev (Docker)** – quickest way to get started.
-- **Neo4j Aura / managed Neo4j** – recommended for production.
-- **Self-hosted Neo4j (Kubernetes/VMs)** – for full control.
+**GitHub OAuth (For CLI Development)**
 
-Minimum requirements:
+| Variable | When Needed | Description |
+|----------|-------------|-------------|
+| `PERCEO_GITHUB_CLIENT_ID` | CLI development | GitHub OAuth App client ID |
 
-- TLS for production (`neo4j+s://`).
-- App/service user with least-privilege credentials.
-- Backups + monitoring for production.
+**Optional Features**
 
-#### 3.2 Event bus (Redis)
-
-**Purpose:**  
-Pub/sub channel between Observer, Analyzer, Analytics, Coordinator, and CLI.
-
-Config section:
-
-```jsonc
-{
-	"eventBus": {
-		"type": "redis",
-		"redisUrl": "rediss://<redis-host>:6379",
-	},
-}
-```
-
-Deployment options:
-
-- **Local dev**
-    - `type: "in-memory"` – simplest, single-process only.
-    - `type: "redis"` with Docker – matches production topology.
-- **Production**
-    - Managed Redis (AWS ElastiCache, GCP Memorystore, Azure Cache, Upstash, etc.).
-
-Best practices:
-
-- Prefer TLS endpoints (`rediss://`).
-- Use ACLs or per-app credentials.
-- Place Redis in a private network; only engines and dashboards should reach it.
-
-#### 3.3 Perceo managed APIs (Observer, Analyzer, Analytics, Coordinator)
-
-The CLI does not embed engine code. Instead it calls **managed APIs** that encapsulate:
-
-- Flow and persona discovery.
-- Change impact analysis (Observer).
-- Insights and predictions (Analyzer).
-- Analytics ingestion + correlation (Analytics).
-- Test orchestration (Coordinator).
-
-Config shape (example):
-
-```jsonc
-{
-	"observer": {
-		"apiBaseUrl": "https://api.perceo.dev/observer",
-		"apiKey": "${PERCEO_API_KEY}",
-		"watch": { "paths": ["app/", "src/"], "ignore": ["node_modules/"] },
-		"ci": { "strategy": "affected-flows", "parallelism": 5 },
-		"analysis": { "useLLM": true, "llmThreshold": 0.7 },
-	},
-	"analyzer": {
-		"apiBaseUrl": "https://api.perceo.dev/analyzer",
-		"apiKey": "${PERCEO_API_KEY}",
-	},
-	"analytics": {
-		"apiBaseUrl": "https://api.perceo.dev/analytics",
-		"apiKey": "${PERCEO_API_KEY}",
-		"provider": "ga4",
-		"credentials": "${ANALYTICS_CREDENTIALS}",
-	},
-	"coordinator": {
-		"apiBaseUrl": "https://api.perceo.dev/coordinator",
-		"apiKey": "${PERCEO_API_KEY}",
-	},
-}
-```
-
-You have two main deployment modes:
-
-##### Option A: Perceo Cloud (recommended for production)
-
-- Engines and APIs are hosted by Perceo.
-- You receive:
-    - Base URL(s) like `https://api.perceo.dev`.
-    - Project ID / API key.
-    - Possibly environment-specific URLs (staging vs prod).
-
-**You deploy:**
-
-- Your application(s).
-- The Perceo CLI in CI pipelines and developer machines.
-- `.perceo/config.json` referencing Perceo Cloud endpoints and using env vars for secrets.
-
-##### Option B: Self-hosted Supabase (local, staging, or production)
-
-- Supabase provides:
-    - Postgres + Auth.
-    - Edge Functions runtime.
-    - Studio for management.
-
-**Deployment steps (high level):**
-
-1. **Create a Supabase project** (or use an existing one).
-2. **Define database schema** for:
-    - Events.
-    - Metrics and production analytics.
-    - Flow engine state and configuration.
-3. **Implement Edge Functions**:
-    - `/observer/bootstrap`
-    - `/observer/analyze`
-    - `/analyzer/*`
-    - `/analytics/*`
-    - `/coordinator/*`
-4. **Configure the CLI** to point at your hosted Supabase functions:
-
-```jsonc
-{
-	"observer": {
-		"apiBaseUrl": "https://<project>.functions.supabase.co/perceo-observer",
-		"apiKey": "${PERCEO_SUPABASE_SERVICE_KEY}",
-	},
-}
-```
-
-5. **Lock down access** using:
-    - Service keys in CI only.
-    - Row-level security for app/user data where appropriate.
-
-#### 3.4 External analytics providers (GA4, Mixpanel, Amplitude)
-
-**Purpose:**  
-Provide real-world behavioural metrics that Analytics + Analyzer use to:
-
-- Compute production success rates.
-- Detect coverage gaps.
-- Estimate revenue impact.
-
-Config section:
-
-```jsonc
-{
-	"analytics": {
-		"provider": "ga4",
-		"credentials": "${ANALYTICS_CREDENTIALS}",
-		"syncInterval": 300,
-		"correlation": {
-			"algorithm": "smith-waterman",
-			"minSimilarity": 0.7,
-		},
-	},
-}
-```
-
-Deployment requirements:
-
-- Separate staging vs production properties/projects.
-- Service credentials for server-side access:
-    - GA4: service account JSON with `analytics.readonly`.
-    - Mixpanel/Amplitude: project API keys.
-- Secrets stored **outside git**, injected via environment variables.
+| Variable | Description |
+|----------|-------------|
+| `PERCEO_ENV` | `local` \| `dev` \| `staging` \| `production` (affects logging/behavior) |
+| `PERCEO_CONFIG_PATH` | Override path to config file (absolute or relative to project) |
+| `PERCEO_TEMPORAL_ENABLED` | Enable Temporal workflows (see section 6) |
 
 ---
 
-### 4. Local development deployment
+### 4. GitHub Actions CI
 
-This setup lets a single developer run the entire loop on a laptop.
+#### 4.1 Automatic Configuration (Recommended)
 
-#### 4.1 Step-by-step
+When you run `perceo init`, if a GitHub remote is detected:
 
-1. **Start Neo4j (Docker)**
+1. CLI asks: "Auto-configure GitHub Actions?"
+2. You authorize in your browser via GitHub OAuth
+3. CLI creates the `PERCEO_API_KEY` secret automatically
+4. CLI creates `.github/workflows/perceo.yml`
+5. Done! Just commit and push
 
-    ```bash
-    docker run \
-      --name perceo-neo4j \
-      -p 7474:7474 -p 7687:7687 \
-      -e NEO4J_AUTH=neo4j/test1234 \
-      neo4j:5
-    ```
+The workflow runs on every PR and analyzes which flows are affected by your changes.
 
-2. **Start Redis (optional but recommended)**
+#### 4.2 Manual Configuration
 
-    ```bash
-    docker run -d --name perceo-redis -p 6379:6379 redis:7
-    ```
+If you skipped auto-config or want to configure manually:
 
-3. **Start local Supabase stack (if self-hosting engines locally)**
+**Step 1: Add the API Key Secret**
 
-    ```bash
-    mkdir -p perceo-services
-    cd perceo-services
-    supabase init
-    supabase start
-    ```
+1. Go to your repository on GitHub
+2. Navigate to **Settings → Secrets and variables → Actions**
+3. Click **New repository secret**
+4. Name: `PERCEO_API_KEY`
+5. Value: (the key displayed during `perceo init`)
+6. Click **Add secret**
 
-4. **Configure `.perceo/config.local.json` in your app repo**
+**Step 2: Commit the Workflow File**
 
-    Example:
+The workflow file is already created at `.github/workflows/perceo.yml`. Just commit it:
 
-    ```jsonc
-    {
-    	"flowGraph": {
-    		"endpoint": "bolt://localhost:7687",
-    		"database": "PerceoDev",
-    	},
-    	"eventBus": {
-    		"type": "redis",
-    		"redisUrl": "redis://localhost:6379",
-    	},
-    	"observer": {
-    		"apiBaseUrl": "http://127.0.0.1:54321/functions/v1/perceo-observer",
-    	},
-    	"analyzer": {
-    		"apiBaseUrl": "http://127.0.0.1:54321/functions/v1/perceo-analyzer",
-    	},
-    	"analytics": {
-    		"apiBaseUrl": "http://127.0.0.1:54321/functions/v1/perceo-analytics",
-    		"provider": "ga4",
-    		"credentials": "file:.perceo/secrets/ga4-staging.json",
-    	},
-    	"coordinator": {
-    		"apiBaseUrl": "http://127.0.0.1:54321/functions/v1/perceo-coordinator",
-    	},
-    }
-    ```
-
-5. **Initialize Perceo in your project**
-
-    ```bash
-    perceo init
-    ```
-
-    - Generates `.perceo/config.json`.
-    - Calls Observer Engine bootstrap if `observer.apiBaseUrl` is set.
-
-6. **Run the full local loop**
-
-    ```bash
-    export PERCEO_ENV=local
-
-    perceo watch --dev --analyze &
-    perceo analytics sync &
-    perceo dashboard --open
-    ```
-
-    - `watch` will eventually use `ObserverEngine.startWatchCore` for real-time flow detection.
-    - `analytics sync` pulls latest production/staging metrics.
-    - `dashboard` shows flows, metrics, and insights.
-
----
-
-### 5. CI / GitHub Actions deployment
-
-In CI you primarily use `perceo ci` commands backed by your managed services.
-
-#### 5.1 Setup
-
-1. Ensure `.perceo/config.json` is present in the repo with:
-    - `flowGraph.endpoint` and `database` (Neo4j Aura / hosted).
-    - `eventBus.type` and `redisUrl` (managed Redis).
-    - `observer.apiBaseUrl` and `analyzer`/`analytics`/`coordinator` URLs.
-
-2. In your CI system (GitHub Actions, GitLab CI, etc.), configure secrets:
-    - `PERCEO_API_KEY`
-    - `PERCEO_NEO4J_PASSWORD` (if needed)
-    - `ANALYTICS_CREDENTIALS`
-
-3. Install the CLI in your pipeline (e.g. `pnpm dlx @perceo/perceo` or via your monorepo build).
-
-#### 5.2 Example GitHub Actions workflow
-
-```yaml
-name: Perceo CI
-
-on:
-    pull_request:
-        branches: [main]
-    push:
-        branches: [main]
-
-jobs:
-    perceo:
-        runs-on: ubuntu-latest
-        env:
-            PERCEO_API_KEY: ${{ secrets.PERCEO_API_KEY }}
-            ANALYTICS_CREDENTIALS: ${{ secrets.ANALYTICS_CREDENTIALS }}
-
-        steps:
-            - uses: actions/checkout@v4
-
-            - name: Setup Node
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "20"
-
-            - name: Install dependencies
-              run: pnpm install --no-frozen-lockfile
-
-            - name: Build CLI
-              run: pnpm run cli:build
-
-            - name: Analyze PR with Perceo
-              run: |
-                  node apps/cli/dist/index.js ci analyze \
-                    --base ${{ github.event.pull_request.base.sha || 'origin/main' }} \
-                    --head ${{ github.sha }} \
-                    --json > perceo-impact.json
-
-            # Optional: consume perceo-impact.json to drive targeted test runs or PR annotations
+```bash
+git add .github/workflows/perceo.yml .perceo/
+git commit -m "Add Perceo CI"
+git push
 ```
 
-You can also run `perceo ci` directly if the CLI is installed globally in the CI image.
+#### 4.3 Managing API Keys
+
+Use the `perceo keys` command to manage your project's API keys:
+
+```bash
+# List all API keys
+perceo keys list
+
+# Create a new API key
+perceo keys create --name jenkins --scopes ci:analyze,ci:test
+
+# Revoke an API key
+perceo keys revoke prc_abc12345 --reason "Rotating keys"
+```
+
+**Available Scopes:**
+- `ci:analyze` - Run `perceo ci analyze`
+- `ci:test` - Run `perceo ci test`
+- `flows:read` - Read flow definitions
+- `flows:write` - Create/update flows
+- `insights:read` - Read insights
+- `events:publish` - Publish events
 
 ---
 
-### 6. Staging and production deployment patterns
+### 5. Local Development
 
-Most teams use three tiers:
+#### 5.1 Running Perceo Locally
 
-1. **Local dev**
-    - Neo4j + Redis via Docker.
-    - Supabase local stack (if self-hosting).
-    - CLI on developer machines.
-2. **Staging**
-    - Managed Neo4j (Aura or small self-hosted cluster).
-    - Managed Redis.
-    - Supabase hosted project or Perceo Cloud staging environment.
-    - Staging analytics properties (GA4/Mixpanel/Amplitude).
-    - `PERCEO_ENV=staging` in CI and preview environments.
-3. **Production**
-    - Highly available Neo4j.
-    - Managed Redis with HA.
-    - Perceo Cloud or hardened Supabase project.
-    - Production analytics credentials.
-    - Scheduled `perceo analytics sync` and `perceo analyze insights` jobs.
+No environment variables needed! Just:
 
-For staging/production, your deployment platform (Kubernetes, ECS, serverless, etc.) should:
+```bash
+# Watch for changes and analyze (with embedded credentials)
+perceo watch --dev --analyze
 
-- Inject all Perceo-related secrets as environment variables.
-- Mount `.perceo/config.json` from your repo.
-- Optionally override with `PERCEO_CONFIG_PATH` when multiple projects run on the same cluster.
+# Analyze specific changes
+perceo analyze --base main --head HEAD
+
+# View flows
+perceo flows list
+```
+
+#### 5.2 Self-Hosted Setup (Advanced)
+
+If you're running your own Perceo backend:
+
+1. Create a `.env` file (git-ignored):
+
+```bash
+# .env
+PERCEO_SUPABASE_URL=https://your-instance.supabase.co
+PERCEO_SUPABASE_ANON_KEY=your_anon_key
+PERCEO_SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+```
+
+2. Load env before running CLI:
+
+```bash
+source .env
+perceo init
+```
 
 ---
 
-### 7. Operator checklists
+### 6. Temporal Worker Deployment (Optional)
 
-#### 7.1 Local development ready when
+The Perceo Observer Engine can optionally use Temporal workflows for durable, observable execution. This enables:
 
-- [ ] `.perceo/config.json` exists in the app repo.
-- [ ] Neo4j is running and reachable (`bolt://localhost:7687`).
-- [ ] (Optional) Redis is running (`redis://localhost:6379`).
-- [ ] Supabase local stack (or equivalent) is up with Perceo functions.
-- [ ] `.perceo/config.local.json` points to local services.
-- [ ] `perceo init` completes and prints an Observer bootstrap summary (or a clear warning).
-- [ ] `perceo ci analyze --base main --head HEAD` runs without connection errors.
+- **Durability**: Workflows survive process crashes and restarts
+- **Observability**: Full execution history and metrics via Temporal UI
+- **Retry logic**: Built-in exponential backoff with configurable policies
+- **Scalability**: Horizontal worker scaling without state management
+- **Long-running operations**: Supports watch mode and continuous monitoring
 
-#### 7.2 Production ready when
+#### 6.1 When to use Temporal
 
-- [ ] Managed Neo4j endpoint and credentials are configured and reachable.
-- [ ] Managed Redis is provisioned, secured, and reachable from engines + dashboard.
-- [ ] Perceo Cloud or hosted Supabase APIs respond at the configured `apiBaseUrl`s.
-- [ ] Analytics credentials for GA4/Mixpanel/Amplitude are wired via environment variables.
-- [ ] CI pipelines use `perceo ci analyze` and (optionally) targeted `perceo ci test` based on impact.
-- [ ] Scheduled analytics sync and insight jobs are configured (cron/scheduled tasks).
+**Use Temporal if you need**:
+- Production-grade reliability with automatic retries
+- Visibility into workflow execution history
+- Long-running watch mode (hours/days)
+- Horizontal scaling of workers
+- Detailed observability and debugging
 
-Once these checklists pass, your Perceo CLI, APIs, and services are fully deployed and ready to support both local development and production workflows.
+**Skip Temporal if**:
+- You're just getting started (direct API mode is simpler)
+- Your use case is basic (single init/analyze calls)
+- You don't need durability guarantees
+- You prefer minimal infrastructure
+
+#### 6.2 Environment Variables for Temporal
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `PERCEO_TEMPORAL_ENABLED` | Enable Temporal workflows | `false` | No |
+| `PERCEO_TEMPORAL_ADDRESS` | Temporal server address | `localhost:7233` | When enabled |
+| `PERCEO_TEMPORAL_NAMESPACE` | Temporal namespace | `perceo` | No |
+| `PERCEO_TEMPORAL_TASK_QUEUE` | Task queue name | `observer-engine` | No |
+| `PERCEO_TEMPORAL_TLS_CERT_PATH` | mTLS cert path (production) | - | For production |
+| `PERCEO_TEMPORAL_TLS_KEY_PATH` | mTLS key path (production) | - | For production |
+
+See `apps/temporal-worker/README.md` for detailed worker documentation.
+
+---
+
+### 7. Migration from Previous Version
+
+#### 7.1 Upgrading from v1.x
+
+If you were using Perceo v1.x with manual environment variables:
+
+**What changed:**
+- ✅ `PERCEO_SUPABASE_URL` and `PERCEO_SUPABASE_ANON_KEY` are now embedded (still overridable)
+- ✅ GitHub Actions setup is now automatic via OAuth
+- ✅ No `.env` file needed for local development
+
+**Migration steps:**
+1. Update CLI: `npm install -g @perceo/perceo@latest`
+2. Remove local `.env` file (or keep for overrides)
+3. Re-run `perceo init` to enable auto-config
+4. Existing projects continue to work with no changes
+
+**Breaking changes:**
+- None! Environment variables still work as overrides
+
+---
+
+### 8. Security Considerations
+
+#### 8.1 Embedded Credentials
+
+**Q: Is it safe to embed the Supabase anon key?**
+- **Yes!** Anon keys are meant to be public and are protected by Row Level Security (RLS)
+- RLS policies ensure users can only access their own data
+- This is the same model used by all Supabase applications
+
+**Q: What about the API keys?**
+- Project API keys are generated per-project and can be revoked anytime
+- Keys are scoped with specific permissions (e.g., `ci:analyze` only)
+- Keys are stored as GitHub Secrets, never in code
+- Manage keys with `perceo keys list/revoke`
+
+#### 8.2 GitHub OAuth
+
+- Uses GitHub's recommended device flow for CLI apps
+- Only requests `repo` scope (minimum required for secrets)
+- Token is used once to create the secret, then discarded
+- You can revoke CLI access anytime in GitHub settings
+
+---
+
+### 9. Troubleshooting
+
+#### 9.1 Common Issues
+
+**"PERCEO_SUPABASE_ANON_KEY is not configured"**
+- This means the embedded key is missing (development build)
+- Solution: Set `PERCEO_SUPABASE_ANON_KEY` env var temporarily
+- For production builds, this should never happen
+
+**"You must log in first"**
+- Run `perceo login` before `perceo init`
+- Your auth tokens may have expired - login again
+
+**"GitHub authorization failed"**
+- Check your internet connection
+- GitHub may be rate-limiting - try again later
+- You can skip auto-config and add the secret manually
+
+**"Insufficient permissions to write to repository"**
+- You need admin or push access to the repository
+- Ask a repository admin to add the secret manually
+- Or, the admin can run `perceo init` themselves
+
+#### 9.2 Getting Help
+
+- Documentation: https://perceo.dev/docs
+- GitHub Issues: https://github.com/perceo/perceo/issues
+- Email: support@perceo.dev
+
+---
+
+### 10. Summary
+
+**Zero-config workflow:**
+1. `npm install -g @perceo/perceo`
+2. `perceo login`
+3. `perceo init` (auto-configures everything)
+4. `git commit && git push`
+5. Done! ✅
+
+**Environment variables needed: 0 (for 99% of users)**
+
+**Manual steps needed: 0 (with auto-config)**
+
+Perceo is now the easiest way to add intelligent regression testing to your project!

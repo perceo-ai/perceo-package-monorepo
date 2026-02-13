@@ -1,6 +1,6 @@
 {
 	"name": "@perceo/perceo",
-	"version": "0.1.1",
+	"version": "0.2.0",
 	"description": "Intelligent regression testing through multi-agent simulation",
 	"keywords": [
 		"testing",
@@ -37,9 +37,12 @@
 	},
 	"dependencies": {
 		"@perceo/observer-engine": "workspace:*",
+		"@perceo/supabase": "workspace:*",
+		"@supabase/supabase-js": "^2.47.0",
 		"chalk": "^5.3.0",
 		"commander": "^12.0.0",
-		"ora": "^8.0.1"
+		"ora": "^8.0.1",
+		"tweetnacl": "^1.0.3"
 	},
 	"devDependencies": {
 		"@changesets/cli": "^2.29.8",

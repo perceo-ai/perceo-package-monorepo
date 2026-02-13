@@ -1,6 +1,7 @@
 import type { BootstrapOptions, BootstrapResult, ChangeAnalysis, ImpactReport, ObserverEngineConfig } from "./types.js";
 import { ObserverApiClient } from "./client.js";
 import { computeChangeAnalysis } from "./git.js";
+import { TemporalClient } from "./temporal-client.js";
 
 export interface PerceoEvent<T = any> {
 	id: string;
@@ -33,20 +34,75 @@ export class ObserverEngine {
 	private readonly config: ObserverEngineConfig;
 	private readonly deps: ObserverEngineDeps;
 	private readonly apiClient: ObserverApiClient | null;
+	private readonly temporalClient: TemporalClient | null;
 
 	constructor(config: ObserverEngineConfig, deps: ObserverEngineDeps = {}) {
 		this.config = config;
 		this.deps = deps;
 		this.apiClient = ObserverApiClient.fromConfig(config);
+
+		// Initialize Temporal client if enabled
+		this.temporalClient = config.temporal?.enabled ? new TemporalClient(config.temporal) : null;
 	}
 
 	/**
 	 * Bootstrap flows/personas for the current project.
 	 *
-	 * Delegates to the managed Observer API when configured, otherwise returns
-	 * a fast local no-op result so init remains non-blocking.
+	 * Delegates to Temporal workflow if enabled, otherwise uses the managed
+	 * Observer API directly. Returns a local no-op result if no API is configured.
 	 */
 	async bootstrapProject(options: BootstrapOptions): Promise<BootstrapResult> {
+		// Use Temporal workflow if enabled
+		if (this.temporalClient) {
+			return this.bootstrapProjectViaWorkflow(options);
+		}
+
+		// Otherwise use direct API call (existing behavior)
+		return this.bootstrapProjectDirect(options);
+	}
+
+	/**
+	 * Bootstrap via Temporal workflow
+	 */
+	private async bootstrapProjectViaWorkflow(options: BootstrapOptions): Promise<BootstrapResult> {
+		if (!this.config.observer.apiBaseUrl) {
+			throw new Error("Observer API base URL is required for Temporal workflows");
+		}
+
+		// Build workflow input from config
+		const workflowInput = {
+			projectDir: options.projectDir,
+			projectName: options.projectName,
+			framework: options.framework,
+			apiConfig: {
+				baseUrl: this.config.observer.apiBaseUrl,
+				apiKey: this.config.observer.apiKey,
+			},
+			eventBusConfig:
+				this.config.eventBus?.type === "redis"
+					? {
+							redisUrl: this.config.eventBus.redisUrl || process.env.PERCEO_REDIS_URL || "",
+						}
+					: undefined,
+		};
+
+		// Execute workflow
+		const result = await this.temporalClient!.executeWorkflow<any>("bootstrapProjectWorkflow", workflowInput, {
+			workflowId: `bootstrap-${options.projectName}-${Date.now()}`,
+		});
+
+		return {
+			projectName: result.projectName || options.projectName,
+			framework: result.framework,
+			flowsInitialized: result.flows?.length || 0,
+			personasInitialized: result.personas?.length || 0,
+		};
+	}
+
+	/**
+	 * Bootstrap via direct API call (original implementation)
+	 */
+	private async bootstrapProjectDirect(options: BootstrapOptions): Promise<BootstrapResult> {
 		if (!this.apiClient) {
 			return {
 				projectName: options.projectName,
@@ -70,11 +126,69 @@ export class ObserverEngine {
 	/**
 	 * Analyze changes between two Git refs and return an ImpactReport.
 	 *
-	 * Uses local Git diff to build a ChangeAnalysis, then delegates to the
-	 * managed Observer API when configured. If no API is configured, returns
-	 * a minimal, local-only report that still captures the changed files.
+	 * Delegates to Temporal workflow if enabled, otherwise uses local Git diff
+	 * and managed Observer API directly.
 	 */
 	async analyzeChanges(params: { baseSha: string; headSha: string; projectRoot: string }): Promise<ImpactReport> {
+		// Use Temporal workflow if enabled
+		if (this.temporalClient) {
+			return this.analyzeChangesViaWorkflow(params);
+		}
+
+		// Otherwise use direct approach (existing behavior)
+		return this.analyzeChangesDirect(params);
+	}
+
+	/**
+	 * Analyze changes via Temporal workflow
+	 */
+	private async analyzeChangesViaWorkflow(params: { baseSha: string; headSha: string; projectRoot: string }): Promise<ImpactReport> {
+		if (!this.config.observer.apiBaseUrl) {
+			throw new Error("Observer API base URL is required for Temporal workflows");
+		}
+
+		// Build workflow input
+		const workflowInput = {
+			projectId: "default", // TODO: Get from config or context
+			projectRoot: params.projectRoot,
+			baseSha: params.baseSha,
+			headSha: params.headSha,
+			apiConfig: {
+				baseUrl: this.config.observer.apiBaseUrl,
+				apiKey: this.config.observer.apiKey,
+			},
+			eventBusConfig:
+				this.config.eventBus?.type === "redis"
+					? {
+							redisUrl: this.config.eventBus.redisUrl || process.env.PERCEO_REDIS_URL || "",
+						}
+					: undefined,
+		};
+
+		// Execute workflow
+		const result = await this.temporalClient!.executeWorkflow<any>("analyzeChangesWorkflow", workflowInput, {
+			workflowId: `analyze-${params.baseSha}-${params.headSha}-${Date.now()}`,
+		});
+
+		// Convert workflow result to ImpactReport format
+		return {
+			changeId: `${params.baseSha}...${params.headSha}`,
+			baseSha: params.baseSha,
+			headSha: params.headSha,
+			flows: result.affectedFlows.map((flowId: string) => ({
+				name: flowId,
+				confidence: 0.8,
+				riskScore: result.riskLevel === "high" ? 0.8 : result.riskLevel === "medium" ? 0.5 : 0.2,
+			})),
+			changes: [], // Changes already analyzed by workflow
+			createdAt: Date.now(),
+		};
+	}
+
+	/**
+	 * Analyze changes via direct API call (original implementation)
+	 */
+	private async analyzeChangesDirect(params: { baseSha: string; headSha: string; projectRoot: string }): Promise<ImpactReport> {
 		const change: ChangeAnalysis = await computeChangeAnalysis(params.projectRoot, params.baseSha, params.headSha);
 
 		let report: ImpactReport;
