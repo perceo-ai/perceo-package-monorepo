@@ -20,13 +20,6 @@ on:
             - "pnpm-workspace.yaml"
             - "package.json"
             - "pnpm-lock.yaml"
-    pull_request:
-        paths:
-            - "apps/temporal-worker/**"
-            - "packages/observer-engine/**"
-            - "packages/supabase/**"
-            - "packages/typescript-config/**"
-            - "apps/temporal-worker/Dockerfile"
 
 permissions:
     contents: read
