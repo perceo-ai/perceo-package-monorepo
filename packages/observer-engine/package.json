@@ -22,7 +22,9 @@
 		"check-types": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@temporalio/client": "^1.11.5"
+		"@perceo/supabase": "workspace:*",
+		"@temporalio/client": "^1.11.5",
+		"chokidar": "^3.5.3"
 	},
 	"devDependencies": {
 		"@repo/typescript-config": "workspace:*",

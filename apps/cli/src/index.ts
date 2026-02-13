@@ -4,8 +4,8 @@ import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
-import { watchCommand } from "./commands/watch.js";
-import { ciCommand } from "./commands/ci.js";
+import { analyzeCommand } from "./commands/analyze.js";
+import { keysCommand } from "./commands/keys.js";
 
 const program = new Command();
 
@@ -14,7 +14,7 @@ program.name("perceo").description("Intelligent regression testing through multi
 program.addCommand(loginCommand);
 program.addCommand(logoutCommand);
 program.addCommand(initCommand);
-program.addCommand(watchCommand);
-program.addCommand(ciCommand);
+program.addCommand(analyzeCommand);
+program.addCommand(keysCommand);
 
 program.parse();

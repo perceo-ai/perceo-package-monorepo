@@ -204,6 +204,22 @@ No endpoints or API keys live in any config file; everything is plugged in via `
 
 ### 5. Example: CI (GitHub Actions)
 
+**Automatic Setup (Recommended)**
+
+When you run `perceo init`, it automatically:
+1. Generates a project-scoped API key for CI/CD
+2. Creates `.github/workflows/perceo.yml` with the workflow configuration
+3. Shows the API key to add as a GitHub secret
+
+Simply add the displayed `PERCEO_API_KEY` secret to your repository:
+- Go to **Settings → Secrets and variables → Actions → New repository secret**
+- Name: `PERCEO_API_KEY`
+- Value: The key shown during `perceo init`
+
+**Manual Setup**
+
+If you need to manually configure GitHub Actions, create `.github/workflows/perceo.yml`:
+
 ```yaml
 name: Perceo CI
 
@@ -213,42 +229,61 @@ on:
     push:
         branches: [main]
 
-jobs:
-    perceo:
-        runs-on: ubuntu-latest
-        env:
-            PERCEO_API_BASE_URL: ${{ secrets.PERCEO_API_BASE_URL }}
-            PERCEO_API_KEY: ${{ secrets.PERCEO_API_KEY }}
-            PERCEO_NEO4J_URI: ${{ secrets.PERCEO_NEO4J_URI }}
-            PERCEO_NEO4J_DATABASE: ${{ secrets.PERCEO_NEO4J_DATABASE }}
-            PERCEO_NEO4J_USERNAME: ${{ secrets.PERCEO_NEO4J_USERNAME }}
-            PERCEO_NEO4J_PASSWORD: ${{ secrets.PERCEO_NEO4J_PASSWORD }}
-            PERCEO_REDIS_URL: ${{ secrets.PERCEO_REDIS_URL }}
-            ANALYTICS_CREDENTIALS: ${{ secrets.ANALYTICS_CREDENTIALS }}
+permissions:
+    contents: read
+    pull-requests: write
 
+jobs:
+    analyze:
+        runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
 
             - name: Setup Node
               uses: actions/setup-node@v4
               with:
                   node-version: "20"
 
-            - name: Install dependencies
-              run: pnpm install --no-frozen-lockfile
+            - name: Install Perceo CLI
+              run: npm install -g @perceo/perceo
 
-            - name: Build CLI
-              run: pnpm run cli:build
-
-            - name: Analyze PR with Perceo
+            - name: Analyze PR Changes
+              if: github.event_name == 'pull_request'
+              env:
+                  PERCEO_API_KEY: ${{ secrets.PERCEO_API_KEY }}
               run: |
-                  node apps/cli/dist/index.js ci analyze \
-                    --base ${{ github.event.pull_request.base.sha || 'origin/main' }} \
+                  perceo ci analyze \
+                    --base ${{ github.event.pull_request.base.sha }} \
                     --head ${{ github.sha }} \
-                    --json > perceo-impact.json
+                    --pr ${{ github.event.pull_request.number }}
 ```
 
-`.perceo/config.json` is in the repo (behavior only). All secrets and URLs come from GitHub Actions secrets.
+**API Key Management**
+
+Manage your project's API keys with the `perceo keys` command:
+
+```bash
+# List all API keys
+perceo keys list
+
+# Create a new API key
+perceo keys create --name jenkins --scopes ci:analyze,ci:test
+
+# Revoke an API key
+perceo keys revoke prc_abc12345 --reason "Rotating keys"
+```
+
+**Available Scopes:**
+- `ci:analyze` - Run `perceo ci analyze`
+- `ci:test` - Run `perceo ci test`
+- `flows:read` - Read flow definitions
+- `flows:write` - Create/update flows
+- `insights:read` - Read insights
+- `events:publish` - Publish events
+
+`.perceo/config.json` is in the repo (behavior only). The API key is project-scoped and stored as a GitHub secret.
 
 ---
 

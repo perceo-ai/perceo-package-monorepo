@@ -1,5 +1,9 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+// Re-export types and data client
+export * from "./types.js";
+export * from "./client.js";
+
 const DEFAULT_SUPABASE_URL = "https://perceo.supabase.co";
 
 /**
@@ -23,6 +27,10 @@ export function getSupabaseAnonKey(): string {
 		throw new Error("PERCEO_SUPABASE_ANON_KEY is not set. Set it to your Supabase project anon key, or use Perceo Cloud.");
 	}
 	return key;
+}
+
+export function getSupabaseServiceRoleKey(): string | undefined {
+	return process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY;
 }
 
 /**
