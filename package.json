@@ -14,6 +14,7 @@
 		"worker:dev": "pnpm --filter @perceo/temporal-worker dev",
 		"worker:build": "pnpm --filter @perceo/temporal-worker build",
 		"worker:start": "pnpm --filter @perceo/temporal-worker start",
+		"worker:docker-build": "[ -f .env.deploy ] && set -a && . ./.env.deploy && set +a; docker build --network host -f apps/temporal-worker/Dockerfile -t ${IMAGE:-perceo-temporal-worker:local} .",
 		"worker:deploy": "pnpm worker:build && ./scripts/deploy-temporal-worker.sh",
 		"changeset": "changeset"
 	},

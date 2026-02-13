@@ -32,14 +32,8 @@ async function run() {
 	// Create connection to Temporal server
 	const connection = await NativeConnection.connect({
 		address: config.serverAddress,
-		tls: config.tls
-			? {
-					clientCertPair: {
-						crt: readFileSync(config.tls.certPath),
-						key: readFileSync(config.tls.keyPath),
-					},
-				}
-			: undefined,
+		tls: true,
+		apiKey: config.apiKey,
 	});
 
 	// Create worker
