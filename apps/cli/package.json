@@ -1,6 +1,6 @@
 {
 	"name": "@perceo/perceo",
-	"version": "0.3.1",
+	"version": "0.3.5",
 	"description": "Intelligent regression testing through multi-agent simulation",
 	"keywords": [
 		"testing",

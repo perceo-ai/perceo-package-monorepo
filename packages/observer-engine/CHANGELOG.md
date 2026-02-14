@@ -1,5 +1,40 @@
 # @perceo/observer-engine
 
+## 2.0.5
+
+### Patch Changes
+
+- Try to fix the .env not working again.
+- Updated dependencies
+  - @perceo/supabase@0.2.4
+  - @perceo/perceo@0.3.5
+
+## 2.0.4
+
+### Patch Changes
+
+- Fix anon key and supabase url not present for login before pulling public_env
+- Updated dependencies
+  - @perceo/supabase@0.2.3
+  - @perceo/perceo@0.3.4
+
+## 2.0.3
+
+### Patch Changes
+
+- Adding loading for .env variables from public env
+- Updated dependencies
+  - @perceo/supabase@0.2.2
+  - @perceo/perceo@0.3.3
+
+## 2.0.2
+
+### Patch Changes
+
+- Updated dependencies
+  - @perceo/supabase@0.2.1
+  - @perceo/perceo@0.3.2
+
 ## 2.0.1
 
 ### Patch Changes

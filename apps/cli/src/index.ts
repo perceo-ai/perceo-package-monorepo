@@ -27,10 +27,12 @@ import { logoutCommand } from "./commands/logout.js";
 import { delCommand } from "./commands/del.js";
 import { analyzeCommand } from "./commands/analyze.js";
 import { keysCommand } from "./commands/keys.js";
+import { ensurePublicEnvLoaded } from "./publicEnv.js";
+import { getCliVersion } from "./publicEnv.js";
 
 const program = new Command();
 
-program.name("perceo").description("Intelligent regression testing through multi-agent simulation").version("0.1.0");
+program.name("perceo").description("Intelligent regression testing through multi-agent simulation").version(getCliVersion());
 
 program.addCommand(loginCommand);
 program.addCommand(logoutCommand);
@@ -39,4 +41,12 @@ program.addCommand(delCommand);
 program.addCommand(analyzeCommand);
 program.addCommand(keysCommand);
 
-program.parse();
+async function main(): Promise<void> {
+	await ensurePublicEnvLoaded();
+	await program.parseAsync();
+}
+
+main().catch((err: unknown) => {
+	console.error(err instanceof Error ? err.message : err);
+	process.exit(1);
+});

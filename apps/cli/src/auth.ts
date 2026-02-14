@@ -20,7 +20,7 @@ const AUTH_FILE = "auth.json";
  * Resolve the directory used for global Perceo config (auth, etc.).
  * Prefers XDG_CONFIG_HOME/perceo, then ~/.perceo.
  */
-function getGlobalConfigDir(): string {
+export function getGlobalConfigDir(): string {
 	const xdg = process.env.XDG_CONFIG_HOME;
 	if (xdg) {
 		return path.join(xdg, "perceo");
@@ -115,7 +115,7 @@ export async function getEffectiveAuth(projectDir: string = process.cwd()): Prom
 /**
  * Create an authenticated Supabase client using stored auth credentials.
  * Returns null if user is not logged in.
- * 
+ *
  * This client automatically uses the embedded Perceo Cloud credentials
  * and the user's authentication tokens from local storage.
  */

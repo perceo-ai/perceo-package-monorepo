@@ -6,6 +6,7 @@
  */
 
 import { createClient, type SupabaseClient, type RealtimeChannel } from "@supabase/supabase-js";
+import { getSupabaseUrl, getSupabaseAnonKey } from "./defaults.js";
 import type {
 	Flow,
 	FlowInsert,
@@ -81,15 +82,11 @@ export class PerceoDataClient {
 	}
 
 	/**
-	 * Create a client from environment variables
+	 * Create a client from environment variables. Uses embedded Perceo Cloud URL and anon key when unset.
 	 */
 	static fromEnv(projectId?: string): PerceoDataClient {
-		const supabaseUrl = process.env.PERCEO_SUPABASE_URL;
-		const supabaseKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY || process.env.PERCEO_SUPABASE_ANON_KEY;
-
-		if (!supabaseUrl || !supabaseKey) {
-			throw new Error("PERCEO_SUPABASE_URL and PERCEO_SUPABASE_ANON_KEY (or SERVICE_ROLE_KEY) are required");
-		}
+		const supabaseUrl = getSupabaseUrl();
+		const supabaseKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY || getSupabaseAnonKey();
 
 		return new PerceoDataClient({
 			supabaseUrl,

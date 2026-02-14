@@ -4,6 +4,9 @@ import * as activities from "./activities";
 import { loadWorkerConfig } from "./config";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 
+/** Embedded Perceo Cloud Supabase URL; override with PERCEO_SUPABASE_URL. */
+const DEFAULT_SUPABASE_URL = "https://lygslnolucoidnhaitdn.supabase.co";
+
 // CORS headers
 const corsHeaders = {
 	"Access-Control-Allow-Origin": "*",
@@ -114,11 +117,11 @@ async function run() {
 				console.log(`  Git Remote URL: ${gitRemoteUrl}`);
 				console.log(`  Workflow API Key: ${workflowApiKey.substring(0, 12)}...`);
 
-			const workflowId = `bootstrap-${projectId}-${Date.now()}`;
-			const supabaseUrl = process.env.PERCEO_SUPABASE_URL;
-			const supabaseServiceRoleKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY;
-			const llmApiKey = process.env.PERCEO_OPEN_ROUTER_API_KEY || process.env.PERCEO_ANTHROPIC_API_KEY;
-			const useOpenRouter = !!process.env.PERCEO_OPEN_ROUTER_API_KEY;
+				const workflowId = `bootstrap-${projectId}-${Date.now()}`;
+				const supabaseUrl = process.env.PERCEO_SUPABASE_URL || DEFAULT_SUPABASE_URL;
+				const supabaseServiceRoleKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY;
+				const llmApiKey = process.env.PERCEO_OPEN_ROUTER_API_KEY || process.env.PERCEO_ANTHROPIC_API_KEY;
+				const useOpenRouter = !!process.env.PERCEO_OPEN_ROUTER_API_KEY;
 
 				if (!supabaseUrl || !supabaseServiceRoleKey) {
 					sendJSON(res, 500, {
@@ -134,18 +137,18 @@ async function run() {
 					return;
 				}
 
-			const bootstrapInput = {
-				projectId,
-				gitRemoteUrl,
-				projectName,
-				framework,
-				branch,
-				workflowApiKey,
-				supabaseUrl,
-				supabaseServiceRoleKey,
-				llmApiKey,
-				useOpenRouter,
-			};
+				const bootstrapInput = {
+					projectId,
+					gitRemoteUrl,
+					projectName,
+					framework,
+					branch,
+					workflowApiKey,
+					supabaseUrl,
+					supabaseServiceRoleKey,
+					llmApiKey,
+					useOpenRouter,
+				};
 
 				const handle = await client.workflow.start("bootstrapProjectWorkflow", {
 					taskQueue: config.taskQueue,
