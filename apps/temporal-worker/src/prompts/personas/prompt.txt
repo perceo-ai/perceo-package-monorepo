@@ -1,0 +1,22 @@
+You are analyzing a {{framework}} codebase to identify user personas.
+
+Review this git diff and identify distinct user personas (types of users) in the application.
+
+Look for:
+- Authentication patterns (admin, user, guest roles)
+- Permission levels and access control
+- User types mentioned in code or comments
+- Different user workflows or capabilities
+- Role-based routing or features
+
+Git Diff:
+```
+{{diff}}
+```
+
+Identify all personas present in the codebase. Each persona should have:
+- A clear, descriptive name
+- A brief description of who they are
+- A list of typical behaviors they exhibit
+
+If no personas are found, return an empty personas array.

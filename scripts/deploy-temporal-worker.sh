@@ -11,6 +11,14 @@ if [[ -f "${ENV_FILE}" ]]; then
   set +a  # Disable automatic export
 fi
 
+# Backwards-compatible mapping: if PERCEO_TEMPORAL_ADDRESS is not set,
+# but PERCEO_TEMPORAL_REGIONAL_ENDPOINT is, use that as the address.
+# The worker code reads PERCEO_TEMPORAL_ADDRESS and defaults to localhost:7233
+# when it's missing, which causes connection errors in Cloud Run.
+if [[ -z "${PERCEO_TEMPORAL_ADDRESS:-}" && -n "${PERCEO_TEMPORAL_REGIONAL_ENDPOINT:-}" ]]; then
+  export PERCEO_TEMPORAL_ADDRESS="${PERCEO_TEMPORAL_REGIONAL_ENDPOINT}"
+fi
+
 # Deploy Perceo Temporal Worker to Temporal Cloud (via Cloud Run)
 #
 # The worker runs on Cloud Run and connects to Temporal Cloud. Prerequisites:
@@ -131,7 +139,7 @@ if [[ "${BUILD_LOCALLY:-}" == "1" ]]; then
   fi
   
   echo "Building Temporal worker Docker image locally..."
-  docker build -f apps/temporal-worker/Dockerfile -t "${IMAGE}" .
+  docker build --network host -f apps/temporal-worker/Dockerfile -t "${IMAGE}" .
 
   if [[ "${SKIP_PUSH:-}" != "1" ]]; then
     echo "Pushing image to registry..."
@@ -159,13 +167,18 @@ gcloud run deploy perceo-temporal-worker \
   --memory 512Mi \
   --cpu 1 \
   --allow-unauthenticated \
+  --set-env-vars PERCEO_TEMPORAL_ADDRESS="${PERCEO_TEMPORAL_ADDRESS}" \
   --set-env-vars PERCEO_TEMPORAL_API_KEY="${PERCEO_TEMPORAL_API_KEY}" \
   --set-env-vars PERCEO_TEMPORAL_NAMESPACE="${PERCEO_TEMPORAL_NAMESPACE}" \
-  --set-env-vars PERCEO_TEMPORAL_ENABLED="${PERCEO_TEMPORAL_ENABLED}" \
-  --set-env-vars PERCEO_TEMPORAL_TASK_QUEUE="${PERCEO_TEMPORAL_TASK_QUEUE}" \
-  --set-env-vars PERCEO_TEMPORAL_REGIONAL_ENDPOINT="${PERCEO_TEMPORAL_REGIONAL_ENDPOINT}" \
-  --set-annotations run.googleapis.com/cpu-throttling='false'
+  --set-env-vars PERCEO_TEMPORAL_ENABLED="${PERCEO_TEMPORAL_ENABLED:-true}" \
+  --set-env-vars PERCEO_TEMPORAL_TASK_QUEUE="${PERCEO_TEMPORAL_TASK_QUEUE:-perceo-task-queue}" \
+  --set-env-vars PERCEO_SUPABASE_URL="${PERCEO_SUPABASE_URL}" \
+  --set-env-vars PERCEO_SUPABASE_SERVICE_ROLE_KEY="${PERCEO_SUPABASE_SERVICE_ROLE_KEY}" \
+  --set-env-vars PERCEO_WORKER_API_KEY="${PERCEO_WORKER_API_KEY:-}" \
+  --set-env-vars PERCEO_OPEN_ROUTER_API_KEY="${PERCEO_OPEN_ROUTER_API_KEY:-}"
 
-echo "Deployment complete. Worker will connect to Temporal Cloud using PERCEO_* env vars."
-echo "Ensure PERCEO_TEMPORAL_ADDRESS, PERCEO_TEMPORAL_NAMESPACE, and TLS certs are configured."
-echo "See docs/temporal_worker_deployment.md for details."
+echo "Deployment complete!"
+echo ""
+echo "Worker HTTP API is now available at the Cloud Run URL."
+echo "Set PERCEO_WORKER_API_URL in your .env file to the Cloud Run URL."
+echo "Example: PERCEO_WORKER_API_URL=https://perceo-temporal-worker-xxxxx-uc.a.run.app"

@@ -104,8 +104,10 @@ The engine delegates heavy computation to managed backend APIs. When APIs are no
 
 Perceo uses a split configuration model for security:
 
-1. **Behavior-only config** (`.perceo/config.json`): Safe to commit, contains paths, strategies, feature flags, provider names
-2. **Secrets via environment variables**: API keys, endpoints, database credentials are NEVER in config files
+1. **Behavior-only config** (`.perceo/config.json`): Safe to commit, contains paths, strategies, feature flags, provider names, and project id/name (which project in Perceo Cloud this repo is linked to).
+2. **Secrets via environment variables**: API keys, endpoints, database credentials are NEVER in config files.
+
+**Project access**: Only users who are members of a project can view or change that project's data. Membership is stored in Supabase (`project_members` table) and enforced by RLS. The CLI checks membership before operations (init, del, keys, analyze); the project creator is automatically added as owner. Owners and admins can add or remove members.
 
 Key environment variables:
 

@@ -36,6 +36,7 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@temporalio/client": "^1.11.3",
 		"@perceo/observer-engine": "workspace:*",
 		"@perceo/supabase": "workspace:*",
 		"@supabase/supabase-js": "^2.47.0",

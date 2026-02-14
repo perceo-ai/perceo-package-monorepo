@@ -5,7 +5,7 @@
 	"description": "Temporal worker for Perceo observer engine workflows",
 	"main": "dist/index.js",
 	"scripts": {
-		"build": "tsc",
+		"build": "tsc && cp -r src/prompts dist/prompts",
 		"dev": "tsc --watch",
 		"start": "node dist/index.js",
 		"test": "jest"
@@ -16,6 +16,9 @@
 		"@temporalio/activity": "^1.11.5",
 		"@temporalio/client": "^1.11.5",
 		"@perceo/observer-engine": "workspace:*",
+		"@perceo/supabase": "workspace:*",
+		"@anthropic-ai/sdk": "^0.30.0",
+		"@openrouter/sdk": "^0.1.0",
 		"redis": "^4.7.0",
 		"node-fetch": "^3.3.2"
 	},

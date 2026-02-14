@@ -2,8 +2,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
 import path from "node:path";
-import { loadConfig } from "../config.js";
-import { PerceoDataClient, type Flow, getSupabaseUrl, getSupabaseAnonKey } from "@perceo/supabase";
+import { ensureProjectAccess } from "../projectAccess.js";
+import type { Flow } from "@perceo/supabase";
 import { computeChangeAnalysis, type ChangeAnalysisFile } from "@perceo/observer-engine";
 
 // ============================================================================
@@ -53,22 +53,7 @@ export const analyzeCommand = new Command("analyze")
 		const spinner = ora("Analyzing changes...").start();
 
 		try {
-			// Load config
-			const config = await loadConfig({ projectDir: projectRoot });
-			const projectName = config.project?.name ?? path.basename(projectRoot);
-			const projectId = config.project?.id;
-
-			// Use embedded Perceo Cloud credentials
-			const supabaseUrl = getSupabaseUrl();
-			const supabaseKey = getSupabaseAnonKey();
-
-			if (!projectId) {
-				spinner.fail("Project not initialized");
-				console.error(chalk.red("\nRun `perceo init` first to set up the project."));
-				process.exit(1);
-			}
-
-			const client = new PerceoDataClient({ supabaseUrl, supabaseKey, projectId });
+			const { client, projectId, projectName } = await ensureProjectAccess({ projectDir: projectRoot });
 
 			// Get git diff
 			spinner.text = "Computing git diff...";
@@ -105,7 +90,7 @@ export const analyzeCommand = new Command("analyze")
 				project_id: projectId,
 				base_sha: baseSha,
 				head_sha: headSha,
-				files: analysis.files.map(f => ({
+				files: analysis.files.map((f) => ({
 					path: f.path,
 					status: f.status,
 				})),
@@ -114,19 +99,19 @@ export const analyzeCommand = new Command("analyze")
 			// Calculate risk and update
 			const riskScore = calculateOverallRisk(affectedFlows);
 			const riskLevel = getRiskLevel(riskScore);
-			
+
 			await client.updateCodeChangeAnalysis(codeChange.id, {
 				risk_level: riskLevel,
 				risk_score: riskScore,
-				affected_flow_ids: affectedFlows.map(f => f.flow.id),
+				affected_flow_ids: affectedFlows.map((f) => f.flow.id),
 			});
 
 			// Mark flows as affected
 			if (affectedFlows.length > 0) {
 				await client.markFlowsAffected(
-					affectedFlows.map(f => f.flow.id),
+					affectedFlows.map((f) => f.flow.id),
 					codeChange.id,
-					riskScore * 0.2
+					riskScore * 0.2,
 				);
 			}
 
@@ -138,7 +123,7 @@ export const analyzeCommand = new Command("analyze")
 				projectName,
 				baseSha,
 				headSha,
-				flows: affectedFlows.map(f => ({
+				flows: affectedFlows.map((f) => ({
 					id: f.flow.id,
 					name: f.flow.name,
 					priority: f.flow.priority,
@@ -158,7 +143,6 @@ export const analyzeCommand = new Command("analyze")
 			} else {
 				printResults(result);
 			}
-
 		} catch (error) {
 			spinner.fail("Analysis failed");
 			console.error(chalk.red(error instanceof Error ? error.message : "Unknown error"));
@@ -209,7 +193,7 @@ function matchAffectedFlows(flows: Flow[], changedFiles: ChangeAnalysisFile[]): 
 function calculateMatchConfidence(flow: Flow, filePath: string): number {
 	const normalizedPath = filePath.toLowerCase();
 	const flowName = flow.name.toLowerCase();
-	
+
 	// Direct entry point match
 	if (flow.entry_point) {
 		const entryNormalized = flow.entry_point.toLowerCase().replace(/\//g, "");
@@ -219,7 +203,7 @@ function calculateMatchConfidence(flow: Flow, filePath: string): number {
 	}
 
 	// Flow name keywords in path
-	const keywords = flowName.split(/[\s-_]+/).filter(k => k.length > 2);
+	const keywords = flowName.split(/[\s-_]+/).filter((k) => k.length > 2);
 	for (const keyword of keywords) {
 		if (normalizedPath.includes(keyword)) {
 			return 0.7;
@@ -250,24 +234,23 @@ function calculateFlowRisk(flow: Flow, matchedFiles: string[], allChanges: Chang
 
 	const baseRisk = priorityWeight[flow.priority] ?? 0.5;
 	const fileRatio = matchedFiles.length / Math.max(allChanges.length, 1);
-	
+
 	return Math.min(1.0, baseRisk + fileRatio * 0.3);
 }
 
 function calculateOverallRisk(affected: MatchedFlow[]): number {
 	if (affected.length === 0) return 0;
-	
+
 	// Weight by priority
 	let totalWeight = 0;
 	let weightedRisk = 0;
-	
+
 	for (const a of affected) {
-		const weight = a.flow.priority === "critical" ? 2.0 : 
-		               a.flow.priority === "high" ? 1.5 : 1.0;
+		const weight = a.flow.priority === "critical" ? 2.0 : a.flow.priority === "high" ? 1.5 : 1.0;
 		totalWeight += weight;
 		weightedRisk += a.riskScore * weight;
 	}
-	
+
 	return Math.min(1.0, weightedRisk / totalWeight);
 }
 
@@ -289,12 +272,8 @@ function printResults(result: AnalysisResult): void {
 	console.log();
 
 	// Risk summary
-	const riskColor = 
-		result.riskLevel === "critical" ? chalk.red :
-		result.riskLevel === "high" ? chalk.yellow :
-		result.riskLevel === "medium" ? chalk.blue :
-		chalk.green;
-	
+	const riskColor = result.riskLevel === "critical" ? chalk.red : result.riskLevel === "high" ? chalk.yellow : result.riskLevel === "medium" ? chalk.blue : chalk.green;
+
 	console.log(chalk.bold("Overall Risk: ") + riskColor(`${result.riskLevel.toUpperCase()} (${(result.riskScore * 100).toFixed(0)}%)`));
 	console.log();
 
@@ -304,21 +283,15 @@ function printResults(result: AnalysisResult): void {
 	} else {
 		console.log(chalk.bold(`${result.flows.length} flow(s) affected:`));
 		console.log();
-		
+
 		for (const flow of result.flows) {
-			const riskColor = 
-				flow.riskScore > 0.7 ? chalk.red :
-				flow.riskScore > 0.4 ? chalk.yellow :
-				chalk.green;
-			
-			const priorityColor = 
-				flow.priority === "critical" ? chalk.red :
-				flow.priority === "high" ? chalk.yellow :
-				chalk.gray;
-			
+			const riskColor = flow.riskScore > 0.7 ? chalk.red : flow.riskScore > 0.4 ? chalk.yellow : chalk.green;
+
+			const priorityColor = flow.priority === "critical" ? chalk.red : flow.priority === "high" ? chalk.yellow : chalk.gray;
+
 			const risk = (flow.riskScore * 100).toFixed(0);
 			const confidence = (flow.confidence * 100).toFixed(0);
-			
+
 			console.log(`  ${chalk.cyan(flow.name)} ${priorityColor(`[${flow.priority}]`)}`);
 			console.log(`     Risk: ${riskColor(`${risk}%`)}  Confidence: ${confidence}%`);
 			console.log(`     Matched: ${chalk.gray(flow.matchedFiles.slice(0, 3).join(", "))}${flow.matchedFiles.length > 3 ? ` (+${flow.matchedFiles.length - 3})` : ""}`);
@@ -328,16 +301,13 @@ function printResults(result: AnalysisResult): void {
 	// Changed files
 	console.log();
 	console.log(chalk.bold(`${result.changes.length} file(s) changed:`));
-	
+
 	const maxShow = 10;
 	for (const file of result.changes.slice(0, maxShow)) {
-		const icon = 
-			file.status === "added" ? chalk.green("+") :
-			file.status === "deleted" ? chalk.red("-") :
-			chalk.yellow("~");
+		const icon = file.status === "added" ? chalk.green("+") : file.status === "deleted" ? chalk.red("-") : chalk.yellow("~");
 		console.log(`  ${icon} ${file.path}`);
 	}
-	
+
 	if (result.changes.length > maxShow) {
 		console.log(chalk.gray(`  ... and ${result.changes.length - maxShow} more`));
 	}

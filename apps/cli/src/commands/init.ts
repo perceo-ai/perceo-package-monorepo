@@ -3,8 +3,10 @@ import chalk from "chalk";
 import ora from "ora";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { isLoggedIn } from "../auth.js";
-import { PerceoDataClient, type FlowInsert, type ApiKeyScope, getSupabaseUrl, getSupabaseAnonKey } from "@perceo/supabase";
+import { execSync } from "node:child_process";
+import { isLoggedIn, getEffectiveAuth } from "../auth.js";
+import { checkProjectAccess } from "../projectAccess.js";
+import { PerceoDataClient, type ApiKeyScope, getSupabaseUrl, getSupabaseAnonKey } from "@perceo/supabase";
 import { detectGitHubRemote, isGitRepository, authorizeGitHub, createRepositorySecret, checkRepositoryPermissions } from "../github.js";
 import { createInterface } from "node:readline";
 import os from "node:os";
@@ -13,6 +15,8 @@ type InitOptions = {
 	dir: string;
 	skipGithub: boolean;
 	yes: boolean;
+	branch?: string;
+	configurePersonas: boolean;
 };
 
 type PackageJson = {
@@ -32,6 +36,8 @@ export const initCommand = new Command("init")
 	.option("-d, --dir <directory>", "Project directory", process.cwd())
 	.option("--skip-github", "Skip GitHub Actions setup", false)
 	.option("-y, --yes", "Skip confirmation prompt (e.g. for CI)", false)
+	.option("-b, --branch <branch>", "Main branch name (default: auto-detect)")
+	.option("--configure-personas", "Configure custom user personas instead of auto-generating them", false)
 	.action(async (options: InitOptions) => {
 		const projectDir = path.resolve(options.dir || process.cwd());
 
@@ -78,6 +84,15 @@ export const initCommand = new Command("init")
 			const projectName = pkg?.name || path.basename(projectDir);
 			const framework = await detectFramework(projectDir, pkg);
 
+			// Detect or use specified branch
+			let branch = options.branch;
+			if (!branch) {
+				branch = detectDefaultBranch(projectDir);
+				console.log(chalk.gray(`  Auto-detected default branch: ${branch}`));
+			} else {
+				console.log(chalk.gray(`  Using specified branch: ${branch}`));
+			}
+
 			if (!SUPPORTED_FRAMEWORKS.includes(framework)) {
 				spinner.fail("Unsupported project type");
 				const detected = framework === "unknown" ? "No React/Next.js/Remix project detected" : `Detected: ${framework}`;
@@ -92,71 +107,449 @@ export const initCommand = new Command("init")
 			// Ensure .perceo directory exists
 			await fs.mkdir(perceoDir, { recursive: true });
 
-			// Use embedded Perceo Cloud credentials
-			const supabaseUrl = getSupabaseUrl();
+			// ============================================================================
+			// Observer bootstrap via Temporal Worker HTTP API
+			// ============================================================================
+
+			spinner.text = "Bootstrapping project via Perceo Observer...";
+
+			// Get authentication token first
+			const storedAuth = await getEffectiveAuth(projectDir);
+			if (!storedAuth) {
+				spinner.fail("Authentication required");
+				throw new Error("Please run 'perceo login' first");
+			}
+
+			// Use the URL from stored auth to ensure JWT is valid
+			const supabaseUrl = storedAuth.supabaseUrl;
 			const supabaseKey = getSupabaseAnonKey();
 
-			let projectId: string | null = null;
-			let flowsDiscovered = 0;
-			let flowsNew = 0;
-
-			spinner.text = "Connecting to Perceo Cloud...";
-			const client = new PerceoDataClient({ supabaseUrl, supabaseKey });
-
-			// Get or create project
-			let project = await client.getProjectByName(projectName);
-			if (!project) {
-				spinner.text = "Creating project...";
-				project = await client.createProject({
-					name: projectName,
-					framework,
-					config: { source: "cli-init" },
+			// Create temp client with user session to get/create project
+			let tempClient: PerceoDataClient;
+			try {
+				console.log(chalk.gray(`\n  Connecting to Perceo Cloud: ${supabaseUrl}`));
+				tempClient = await PerceoDataClient.fromUserSession({
+					supabaseUrl: storedAuth.supabaseUrl,
+					supabaseKey,
+					accessToken: storedAuth.access_token,
+					refreshToken: storedAuth.refresh_token,
 				});
+			} catch (authError) {
+				spinner.fail("Failed to connect to Perceo Cloud");
+				console.error(chalk.red("\nAuthentication error details:"));
+				console.error(chalk.gray(`  Supabase URL: ${supabaseUrl}`));
+				console.error(chalk.gray(`  Error: ${authError instanceof Error ? authError.message : String(authError)}`));
+				if (authError instanceof Error && authError.stack) {
+					console.error(chalk.gray(`  Stack: ${authError.stack}`));
+				}
+				throw new Error(`Failed to authenticate with Perceo Cloud. Try running 'perceo logout' followed by 'perceo login'.`);
 			}
-			projectId = project.id;
 
-			// Discover and bootstrap flows
-			spinner.text = "Discovering flows from codebase...";
-			const discoveredFlows = await discoverFlows(projectDir, framework);
-			flowsDiscovered = discoveredFlows.length;
-			if (flowsDiscovered === 0) {
-				spinner.text = "Discovering flows from codebase... " + chalk.gray("(0 flows found)");
+			// Create project first if it doesn't exist (need project ID for workflow)
+			let tempProject: any;
+
+			// Detect git remote URL early (needed for both project creation and workflow)
+			const remote = detectGitHubRemote(projectDir);
+			const gitRemoteUrl = remote ? `https://github.com/${remote.owner}/${remote.repo}` : null;
+
+			try {
+				spinner.text = "Looking up project...";
+				tempProject = await tempClient.getProjectByName(projectName);
+			} catch (dbError) {
+				spinner.fail("Failed to query project");
+				console.error(chalk.red("\nDatabase error details:"));
+				console.error(chalk.gray(`  Error: ${dbError instanceof Error ? dbError.message : String(dbError)}`));
+				throw new Error("Failed to query project from database");
+			}
+
+			if (!tempProject) {
+				try {
+					spinner.text = "Creating project...";
+
+					tempProject = await tempClient.createProject({
+						name: projectName,
+						framework,
+						config: { source: "cli-init" },
+						git_remote_url: gitRemoteUrl,
+					});
+				} catch (createError) {
+					spinner.fail("Failed to create project");
+					console.error(chalk.red("\nDatabase error details:"));
+					console.error(chalk.gray(`  Error: ${createError instanceof Error ? createError.message : String(createError)}`));
+					throw new Error("Failed to create project in database");
+				}
 			} else {
-				spinner.text = `Discovering flows from codebase... ${chalk.gray(`(${flowsDiscovered} flow(s) found)`)}`;
+				// Existing project: ensure current user has access
+				const role = await checkProjectAccess(tempClient, tempProject.id);
+				if (!role) {
+					spinner.fail("Access denied");
+					console.error(chalk.red(`\nYou don't have access to the project "${tempProject.name}".`));
+					console.error(chalk.gray("Only users added to the project can run init. Ask a project owner or admin to add you."));
+					process.exit(1);
+				}
 			}
 
-			// Check existing flows
-			spinner.text = "Loading existing flows from project...";
-			const existingFlows = await client.getFlows(projectId);
-			const existingNames = new Set(existingFlows.map((f) => f.name));
-			spinner.text = existingFlows.length > 0 ? `Loading existing flows... ${chalk.gray(`(${existingFlows.length} existing)`)}` : "Saving flows to Supabase...";
+			// ============================================================================
+			// Generate Workflow API Key (for Temporal workflow authorization)
+			// ============================================================================
+			spinner.text = "Generating workflow authorization key...";
+			let workflowApiKey: string;
 
-			// Prepare flows for upsert (include required FlowInsert fields)
-			const flowsToUpsert: FlowInsert[] = discoveredFlows.map((flow) => ({
-				project_id: projectId!,
-				persona_id: null,
-				name: flow.name,
-				description: flow.description,
-				priority: flow.priority as "critical" | "high" | "medium" | "low",
-				entry_point: flow.entryPoint ?? null,
-				graph_data: {
-					components: flow.components ?? [],
-					pages: flow.pages ?? [],
-				},
-				coverage_score: null,
-				is_active: true,
-			}));
+			try {
+				// Get current user ID for audit trail
+				const {
+					data: { user },
+				} = await tempClient.getSupabaseClient().auth.getUser();
+				const userId = user?.id;
 
-			// Upsert flows to Supabase
-			spinner.text = "Saving flows to Supabase...";
-			if (flowsToUpsert.length > 0) {
-				await client.upsertFlows(flowsToUpsert);
-				flowsNew = discoveredFlows.filter((f) => !existingNames.has(f.name)).length;
-				spinner.text = `Saving flows to Supabase... ${chalk.gray(`(${flowsToUpsert.length} saved: ${flowsNew} new, ${flowsToUpsert.length - flowsNew} updated)`)}`;
+				// Check if a workflow auth key already exists and revoke it (allow re-init)
+				try {
+					const existingKeys = await tempClient.getApiKeys(tempProject.id);
+					const existingWorkflowKey = existingKeys.find((k) => k.name === "temporal-workflow-auth");
+					if (existingWorkflowKey) {
+						console.log(chalk.gray("\n  ✓ Found existing workflow key, deleting it"));
+						await tempClient.deleteApiKey(existingWorkflowKey.id);
+					}
+				} catch (cleanupError) {
+					// Non-fatal: if we can't check/clean up existing keys, we'll try to create anyway
+					console.log(chalk.gray(`  Note: Could not check for existing keys: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`));
+				}
+
+				const { key } = await tempClient.createApiKey(tempProject.id, {
+					name: "temporal-workflow-auth",
+					scopes: ["workflows:start"],
+					createdBy: userId,
+				});
+				workflowApiKey = key;
+				console.log(chalk.gray("\n  ✓ Workflow authorization key generated"));
+				console.log(chalk.gray(`    Key prefix: ${key.substring(0, 12)}...`));
+			} catch (keyError) {
+				// CRITICAL: This should not happen in production. The workflow requires DB-stored keys.
+				spinner.fail("Database key generation failed");
+				console.error(chalk.red("\n  ✗ CRITICAL: Cannot generate workflow authorization key in database"));
+
+				// Handle Supabase PostgrestError objects properly
+				if (keyError && typeof keyError === "object") {
+					const err = keyError as any;
+					console.error(chalk.gray(`    Error code: ${err.code || "N/A"}`));
+					console.error(chalk.gray(`    Error message: ${err.message || "Unknown error"}`));
+					if (err.details) {
+						console.error(chalk.gray(`    Details: ${err.details}`));
+					}
+					if (err.hint) {
+						console.error(chalk.gray(`    Hint: ${err.hint}`));
+					}
+				} else if (keyError instanceof Error) {
+					console.error(chalk.gray(`    Error: ${keyError.message}`));
+					if (keyError.stack) {
+						console.error(chalk.gray(`    Stack: ${keyError.stack}`));
+					}
+				} else {
+					console.error(chalk.gray(`    Error: ${String(keyError)}`));
+				}
+
+				// Generate a secure local key (same format as database keys)
+				const crypto = await import("node:crypto");
+				const keyBytes = crypto.randomBytes(32);
+				workflowApiKey = `prc_${keyBytes.toString("base64url")}`;
+
+				console.log(chalk.yellow("\n  ⚠ Using temporary local key as fallback"));
+				console.log(chalk.gray(`    Key prefix: ${workflowApiKey.substring(0, 12)}...`));
+				console.log(chalk.red("  ✗ WARNING: Temporal workflows will NOT work with this key"));
+				console.log(chalk.red("  ✗ You must fix the database issue before workflows can run"));
+
+				throw new Error("Failed to generate workflow authorization key in database");
+			}
+
+			// Prepare Worker API connection details
+			const workerApiUrl = process.env.PERCEO_WORKER_API_URL || "https://perceo-temporal-worker-331577200018.us-west1.run.app/";
+			const workerApiKey = process.env.PERCEO_WORKER_API_KEY;
+
+			const headers: Record<string, string> = {
+				"Content-Type": "application/json",
+			};
+			if (workerApiKey) {
+				headers["x-api-key"] = workerApiKey;
+			}
+
+			// ============================================================================
+			// Configure LLM API Key (required for bootstrap)
+			// ============================================================================
+			spinner.stop();
+
+			// Note: LLM API key must be configured in Supabase project_secrets table
+			// by the Perceo admin. The temporal workflow will pull it from there.
+			console.log(chalk.gray("\n  ℹ️  LLM API key will be fetched from secure storage during bootstrap"));
+			console.log(chalk.gray("     (configured by admin in Supabase project_secrets table)"));
+
+			// ============================================================================
+			// Configure User Personas (if requested)
+			// ============================================================================
+			let userConfiguredPersonas: any[] = [];
+			let useCustomPersonas = false;
+
+			if (options.configurePersonas) {
+				spinner.stop();
+				console.log(chalk.bold("\n🎭 Configure User Personas"));
+				console.log(chalk.gray("Define custom user personas for your application, or let Perceo auto-generate them from your codebase."));
+
+				const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+				const configurePersonasAnswer = await new Promise<string>((resolve) => {
+					rl.question(chalk.cyan("Do you want to configure custom personas? [y/N]: "), (ans) => {
+						resolve((ans || "n").trim().toLowerCase());
+					});
+				});
+
+				if (configurePersonasAnswer === "y" || configurePersonasAnswer === "yes") {
+					useCustomPersonas = true;
+					console.log(chalk.green("\n✓ Configuring custom personas"));
+					console.log(chalk.gray("Enter persona details (press Enter with empty name to finish):"));
+
+					let personaIndex = 1;
+					while (true) {
+						console.log(chalk.bold(`\nPersona ${personaIndex}:`));
+
+						const name = await new Promise<string>((resolve) => {
+							rl.question(chalk.cyan("  Name: "), resolve);
+						});
+
+						if (!name.trim()) {
+							break;
+						}
+
+						const description = await new Promise<string>((resolve) => {
+							rl.question(chalk.cyan("  Description: "), resolve);
+						});
+
+						const behaviors = await new Promise<string>((resolve) => {
+							rl.question(chalk.cyan("  Key behaviors (comma-separated): "), resolve);
+						});
+
+						// Parse behaviors into a structured format
+						const behaviorList = behaviors
+							.split(",")
+							.map((b) => b.trim())
+							.filter((b) => b.length > 0);
+						const behaviorObj: Record<string, any> = {};
+
+						behaviorList.forEach((behavior, idx) => {
+							behaviorObj[`behavior_${idx + 1}`] = behavior;
+						});
+
+						userConfiguredPersonas.push({
+							name: name.trim(),
+							description: description.trim() || null,
+							behaviors: behaviorObj,
+						});
+
+						console.log(chalk.green(`  ✓ Added persona: ${name}`));
+						personaIndex++;
+					}
+
+					if (userConfiguredPersonas.length === 0) {
+						console.log(chalk.yellow("  No personas configured, will use auto-generation"));
+						useCustomPersonas = false;
+					} else {
+						console.log(chalk.green(`\n✓ Configured ${userConfiguredPersonas.length} custom personas`));
+
+						// Store personas in database before starting workflow
+						try {
+							console.log(chalk.gray("  Saving personas to database..."));
+							await tempClient.createUserConfiguredPersonas(userConfiguredPersonas, tempProject.id);
+							console.log(chalk.green("  ✓ Personas saved successfully"));
+						} catch (personaError) {
+							console.error(chalk.red("  ✗ Failed to save personas:"), personaError);
+							throw new Error("Failed to save custom personas to database");
+						}
+					}
+				}
+
+				rl.close();
+				spinner.start("Starting bootstrap workflow...");
 			} else {
-				flowsNew = 0;
-				spinner.text = "Saving flows to Supabase... " + chalk.gray("(none to save)");
+				spinner.start("Starting bootstrap workflow...");
 			}
+
+			let bootstrapResponse: Response;
+			try {
+				console.log(chalk.gray(`\n  Connecting to worker API: ${workerApiUrl}`));
+				console.log(chalk.gray(`  Project ID: ${tempProject.id}`));
+				console.log(chalk.gray(`  Git Remote URL: ${gitRemoteUrl || "Not detected"}`));
+				console.log(chalk.gray(`  Workflow API Key: ${workflowApiKey.substring(0, 12)}...`));
+
+				if (!gitRemoteUrl) {
+					spinner.fail("Cannot start bootstrap workflow");
+					throw new Error("Git remote URL not detected. Please ensure this is a Git repository with a GitHub remote configured.");
+				}
+
+				bootstrapResponse = await fetch(`${workerApiUrl}/api/workflows/bootstrap`, {
+					method: "POST",
+					headers,
+					body: JSON.stringify({
+						projectId: tempProject.id,
+						gitRemoteUrl,
+						projectName,
+						framework,
+						branch,
+						workflowApiKey,
+						useCustomPersonas,
+					}),
+				});
+			} catch (fetchError) {
+				spinner.fail("Failed to connect to worker API");
+				console.error(chalk.red("\nNetwork error details:"));
+				console.error(chalk.gray(`  URL: ${workerApiUrl}/api/workflows/bootstrap`));
+				console.error(chalk.gray(`  Error: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`));
+				if (fetchError instanceof Error && fetchError.cause) {
+					console.error(chalk.gray(`  Cause: ${JSON.stringify(fetchError.cause, null, 2)}`));
+				}
+				throw new Error(`Failed to connect to worker API at ${workerApiUrl}. Check that PERCEO_WORKER_API_URL is correct and the service is running.`);
+			}
+
+			if (!bootstrapResponse.ok) {
+				const errorData = await bootstrapResponse.json().catch(() => ({}));
+				spinner.fail("Failed to start bootstrap workflow");
+				console.error(chalk.red(`  HTTP ${bootstrapResponse.status}: ${bootstrapResponse.statusText}`));
+				throw new Error(`Bootstrap start failed: ${errorData.error || bootstrapResponse.statusText}`);
+			}
+
+			const { workflowId } = (await bootstrapResponse.json()) as { workflowId: string; message: string };
+
+			console.log(chalk.gray(`\n  Workflow ID: ${workflowId}`));
+			spinner.text = "Initializing workflow...";
+
+			// Poll workflow progress
+			let temporalResult: BootstrapProjectResult;
+			for (;;) {
+				let queryResponse: Response;
+				try {
+					queryResponse = await fetch(`${workerApiUrl}/api/workflows/${workflowId}`, {
+						headers,
+					});
+				} catch (fetchError) {
+					console.log(chalk.yellow("\n  Warning: Failed to query workflow progress (network error), retrying..."));
+					console.log(chalk.gray(`    Error: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`));
+					await sleep(2000);
+					continue;
+				}
+
+				if (!queryResponse.ok) {
+					console.log(chalk.yellow(`\n  Warning: Failed to query workflow progress (HTTP ${queryResponse.status}), retrying...`));
+					await sleep(2000);
+					continue;
+				}
+
+				const queryResult = (await queryResponse.json()) as {
+					workflowId: string;
+					progress?: BootstrapProgress;
+					completed: boolean;
+					result?: BootstrapProjectResult;
+					error?: string;
+				};
+
+				if (queryResult.progress?.message) {
+					spinner.prefixText = chalk.gray(`[${queryResult.progress.stage}]`);
+					spinner.text = `${queryResult.progress.message} (${queryResult.progress.percentage}%)`;
+				}
+
+				if (queryResult.completed) {
+					if (queryResult.error) {
+						spinner.fail("Bootstrap workflow failed");
+						throw new Error(queryResult.error);
+					}
+					if (!queryResult.result) {
+						spinner.fail("Bootstrap workflow completed but no result returned");
+						throw new Error("No result from workflow");
+					}
+					// Success - break with result
+					temporalResult = queryResult.result;
+					break;
+				}
+
+				if (queryResult.progress?.stage === "error") {
+					spinner.fail("Bootstrap workflow failed");
+					throw new Error(queryResult.progress.error || "Unknown workflow error");
+				}
+
+				await sleep(1000);
+			}
+
+			spinner.succeed("Bootstrap complete!");
+			console.log(chalk.green("\n✓ Bootstrap successful:"));
+			console.log(chalk.gray(`  Personas: ${temporalResult.personasExtracted}`));
+			console.log(chalk.gray(`  Flows: ${temporalResult.flowsExtracted}`));
+			console.log(chalk.gray(`  Steps: ${temporalResult.stepsExtracted}`));
+			console.log(chalk.gray(`  Commits: ${temporalResult.totalCommitsProcessed}`));
+			console.log();
+
+			spinner.start("Finishing initialization...");
+
+			// Use embedded Perceo Cloud credentials and, if available, the user's auth session
+			spinner.text = "Connecting to Perceo Cloud...";
+			let client: PerceoDataClient;
+
+			if (storedAuth) {
+				try {
+					client = await (PerceoDataClient as any).fromUserSession({
+						supabaseUrl: storedAuth.supabaseUrl,
+						supabaseKey,
+						accessToken: storedAuth.access_token,
+						refreshToken: storedAuth.refresh_token,
+					});
+				} catch (authError) {
+					spinner.warn("Failed to attach user session, falling back to anonymous access");
+					console.log(chalk.gray(`  ${authError instanceof Error ? authError.message : typeof authError === "string" ? authError : "Unknown error while restoring session"}`));
+					spinner.start("Connecting to Perceo Cloud...");
+					client = new PerceoDataClient({ supabaseUrl, supabaseKey });
+				}
+			} else {
+				client = new PerceoDataClient({ supabaseUrl, supabaseKey });
+			}
+
+			// Git remote URL was already detected earlier (reuse the same variables)
+
+			// Get or create project (project was already created/retrieved for temporal workflow, but ensure it exists)
+			let project: any;
+			try {
+				spinner.text = "Syncing project...";
+				project = await client.getProjectByName(projectName);
+			} catch (dbError) {
+				spinner.fail("Failed to query project");
+				console.error(chalk.red("\nDatabase error details:"));
+				console.error(chalk.gray(`  Error: ${dbError instanceof Error ? dbError.message : String(dbError)}`));
+				throw new Error("Failed to query project from database");
+			}
+
+			if (!project) {
+				try {
+					spinner.text = "Creating project...";
+					project = await client.createProject({
+						name: projectName,
+						framework,
+						config: { source: "cli-init" },
+						git_remote_url: gitRemoteUrl,
+					});
+				} catch (createError) {
+					spinner.fail("Failed to create project");
+					console.error(chalk.red("\nDatabase error details:"));
+					console.error(chalk.gray(`  Error: ${createError instanceof Error ? createError.message : String(createError)}`));
+					throw new Error("Failed to create project in database");
+				}
+			} else if (gitRemoteUrl && project.git_remote_url !== gitRemoteUrl) {
+				// Update git remote if it changed
+				try {
+					await client.updateProject(project.id, { git_remote_url: gitRemoteUrl });
+				} catch (updateError) {
+					// Don't fail on git remote update error, just warn
+					console.log(chalk.yellow(`  Warning: Failed to update git remote URL: ${updateError instanceof Error ? updateError.message : String(updateError)}`));
+				}
+			}
+			const projectId = project.id;
+
+			// Use results from temporal workflow - flows are already extracted and persisted by the workflow
+			const flowsDiscovered = temporalResult.flowsExtracted;
+			const flowsNew = temporalResult.flowsExtracted; // All flows from temporal are new (workflow handles deduplication)
 
 			// Generate API key and GitHub Actions workflow
 			let apiKey: string | null = null;
@@ -169,9 +562,29 @@ export const initCommand = new Command("init")
 				const scopes: ApiKeyScope[] = ["ci:analyze", "ci:test", "flows:read", "insights:read", "events:publish"];
 
 				try {
+					// Get current user ID for audit trail
+					const {
+						data: { user },
+					} = await client.getSupabaseClient().auth.getUser();
+					const userId = user?.id;
+
+					// Check if a github-actions key already exists and revoke it (allow re-init)
+					try {
+						const existingKeys = await client.getApiKeys(projectId);
+						const existingGhKey = existingKeys.find((k) => k.name === "github-actions");
+						if (existingGhKey) {
+							console.log(chalk.gray("\n  ✓ Found existing GitHub Actions key, deleting it"));
+							await client.deleteApiKey(existingGhKey.id);
+						}
+					} catch (cleanupError) {
+						// Non-fatal: if we can't check/clean up existing keys, we'll try to create anyway
+						console.log(chalk.gray(`  Note: Could not check for existing keys: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`));
+					}
+
 					const { key } = await client.createApiKey(projectId, {
 						name: "github-actions",
 						scopes,
+						createdBy: userId,
 					});
 					apiKey = key;
 
@@ -203,7 +616,10 @@ export const initCommand = new Command("init")
 									console.log(chalk.yellow("  You need admin or push access to configure secrets automatically."));
 								} else {
 									spinner.text = "Creating PERCEO_API_KEY secret...";
-									await createRepositorySecret(ghAuth.accessToken, remote.owner, remote.repo, "PERCEO_API_KEY", apiKey);
+									if (!apiKey) {
+										throw new Error("API key not found after creation");
+									}
+									await createRepositorySecret(ghAuth.accessToken, remote.owner, remote.repo, "PERCEO_API_KEY", apiKey!);
 
 									githubAutoConfigured = true;
 									spinner.text = "Creating GitHub Actions workflow...";
@@ -229,14 +645,55 @@ export const initCommand = new Command("init")
 					await fs.mkdir(workflowDir, { recursive: true });
 
 					if (!(await fileExists(workflowPath))) {
-						const workflowContent = generateGitHubWorkflow();
+						const workflowContent = generateGitHubWorkflow(branch);
 						await fs.writeFile(workflowPath, workflowContent, "utf8");
 						workflowCreated = true;
 					}
 				} catch (error) {
-					// Don't fail init if API key generation fails
-					spinner.warn("Continuing without CI setup");
-					console.log(chalk.yellow(`  ${error instanceof Error ? error.message : "Unknown error"}`));
+					// Fallback: generate a local API key if database insert fails
+					// This ensures init never fails and users still get a usable key
+					console.log(chalk.yellow("\n  ⚠ Database key generation failed, using local fallback"));
+
+					// Handle Supabase PostgrestError objects properly
+					if (error && typeof error === "object") {
+						const err = error as any;
+						console.error(chalk.gray(`    Error code: ${err.code || "N/A"}`));
+						console.error(chalk.gray(`    Error message: ${err.message || "Unknown error"}`));
+						if (err.details) {
+							console.error(chalk.gray(`    Details: ${err.details}`));
+						}
+						if (err.hint) {
+							console.error(chalk.gray(`    Hint: ${err.hint}`));
+						}
+					} else if (error instanceof Error) {
+						console.error(chalk.gray(`    Error: ${error.message}`));
+					} else {
+						console.error(chalk.gray(`    Error: ${String(error)}`));
+					}
+
+					// Generate a secure local key (same format as database keys)
+					const crypto = await import("node:crypto");
+					const keyBytes = crypto.randomBytes(32);
+					apiKey = `prc_${keyBytes.toString("base64url")}`;
+
+					console.log(chalk.gray("  ✓ Local CI API key generated"));
+					console.log(chalk.gray(`    Key prefix: ${apiKey.substring(0, 12)}...`));
+					console.log(chalk.yellow("  ⚠ This key is not stored in the database and is local-only"));
+
+					// Still try to create workflow file if we have a local key
+					try {
+						const workflowDir = path.join(projectDir, ".github", "workflows");
+						const workflowPath = path.join(workflowDir, "perceo.yml");
+						await fs.mkdir(workflowDir, { recursive: true });
+						if (!(await fileExists(workflowPath))) {
+							const workflowContent = generateGitHubWorkflow(branch);
+							await fs.writeFile(workflowPath, workflowContent, "utf8");
+							workflowCreated = true;
+						}
+					} catch (workflowError) {
+						console.log(chalk.yellow("  ⚠ Could not create workflow file"));
+						console.log(chalk.gray(`    ${workflowError instanceof Error ? workflowError.message : "Unknown error"}`));
+					}
 				}
 			}
 
@@ -245,7 +702,7 @@ export const initCommand = new Command("init")
 				spinner.stop();
 				console.log(chalk.yellow(`\n.perceo/${CONFIG_FILE} already exists. Skipping config generation.`));
 			} else {
-				const config = createDefaultConfig(projectName, framework, projectId);
+				const config = createDefaultConfig(projectName, framework, projectId, branch);
 				await fs.writeFile(perceoConfigPath, JSON.stringify(config, null, 2) + "\n", "utf8");
 			}
 
@@ -259,6 +716,7 @@ export const initCommand = new Command("init")
 
 			console.log("\n" + chalk.bold("Project: ") + projectName);
 			console.log(chalk.bold("Framework: ") + framework);
+			console.log(chalk.bold("Branch: ") + branch);
 			console.log(chalk.bold("Config: ") + path.relative(projectDir, perceoConfigPath));
 			console.log(chalk.bold("Project ID: ") + projectId);
 			console.log(chalk.bold("Flows discovered: ") + `${flowsDiscovered} (${flowsNew} new)`);
@@ -305,308 +763,71 @@ export const initCommand = new Command("init")
 				console.log("  3. Commit and push to trigger CI: " + chalk.cyan("git add . && git commit -m 'Add Perceo'"));
 			} else {
 				console.log("  1. Review flows: " + chalk.cyan("perceo flows list"));
-				console.log("  2. Analyze PR changes: " + chalk.cyan("perceo analyze --base main"));
+				console.log("  2. Analyze PR changes: " + chalk.cyan(`perceo analyze --base ${branch}`));
 			}
 			console.log("\n" + chalk.gray("Run `perceo logout` to sign out if needed."));
 		} catch (error) {
 			spinner.fail("Failed to initialize Perceo");
-			console.error(chalk.red(error instanceof Error ? error.message : "Unknown error"));
+
+			if (error instanceof Error) {
+				console.error(chalk.red(error.message));
+
+				// In debug/development mode, also print the stack trace for easier diagnosis
+				if (process.env.PERCEO_DEBUG === "1" || process.env.NODE_ENV === "development") {
+					if (error.stack) {
+						console.error(chalk.gray(error.stack));
+					}
+				}
+			} else {
+				// Ensure we never emit a useless "Unknown error" – always show the raw value
+				try {
+					console.error(chalk.red(`Unexpected error: ${JSON.stringify(error, null, 2)}`));
+				} catch {
+					console.error(chalk.red(`Unexpected error: ${String(error)}`));
+				}
+			}
+
 			process.exit(1);
 		}
 	});
 
 // ============================================================================
-// Flow Discovery
-// ============================================================================
-
-interface DiscoveredFlow {
-	name: string;
-	description: string;
-	priority: string;
-	entryPoint?: string;
-	components?: string[];
-	pages?: string[];
+// Observer bootstrap workflow types (kept in sync with apps/temporal-worker/src/workflows/bootstrap-project.workflow.ts)
+interface BootstrapProjectInput {
+	projectId: string;
+	gitRemoteUrl: string; // Git remote URL to clone
+	projectName: string;
+	framework: string;
+	branch: string;
+	workflowApiKey: string; // Project-scoped API key for workflow authorization
+	supabaseUrl: string;
+	supabaseServiceRoleKey: string;
+	useCustomPersonas?: boolean; // Whether to use user-configured personas instead of auto-generating
 }
 
-async function discoverFlows(projectRoot: string, framework: string): Promise<DiscoveredFlow[]> {
-	const flows: DiscoveredFlow[] = [];
-
-	// Framework-specific discovery
-	if (framework === "nextjs") {
-		flows.push(...(await discoverNextJsFlows(projectRoot)));
-	} else if (framework === "react") {
-		flows.push(...(await discoverReactFlows(projectRoot)));
-	} else {
-		flows.push(...(await discoverGenericFlows(projectRoot)));
-	}
-
-	// Always add common flows if patterns exist
-	flows.push(...(await discoverCommonFlows(projectRoot)));
-
-	// Deduplicate by name
-	const seen = new Set<string>();
-	return flows.filter((f) => {
-		if (seen.has(f.name)) return false;
-		seen.add(f.name);
-		return true;
-	});
+interface BootstrapProjectResult {
+	projectId: string;
+	personasExtracted: number;
+	flowsExtracted: number;
+	stepsExtracted: number;
+	totalCommitsProcessed: number;
 }
 
-async function discoverNextJsFlows(projectRoot: string): Promise<DiscoveredFlow[]> {
-	const flows: DiscoveredFlow[] = [];
-
-	const appDir = path.join(projectRoot, "app");
-	const srcAppDir = path.join(projectRoot, "src", "app");
-	const pagesDir = path.join(projectRoot, "pages");
-	const srcPagesDir = path.join(projectRoot, "src", "pages");
-
-	// Discover from App Router
-	for (const dir of [appDir, srcAppDir]) {
-		if (await dirExists(dir)) {
-			const pages = await findNextJsAppPages(dir);
-			for (const page of pages) {
-				const flowName = pagePathToFlowName(page.route);
-				flows.push({
-					name: flowName,
-					description: `User flow for ${page.route}`,
-					priority: inferPriority(page.route),
-					entryPoint: page.route,
-					pages: [page.file],
-				});
-			}
-		}
-	}
-
-	// Discover from Pages Router
-	for (const dir of [pagesDir, srcPagesDir]) {
-		if (await dirExists(dir)) {
-			const pages = await findNextJsPages(dir);
-			for (const page of pages) {
-				const flowName = pagePathToFlowName(page.route);
-				if (!flows.some((f) => f.name === flowName)) {
-					flows.push({
-						name: flowName,
-						description: `User flow for ${page.route}`,
-						priority: inferPriority(page.route),
-						entryPoint: page.route,
-						pages: [page.file],
-					});
-				}
-			}
-		}
-	}
-
-	return flows;
-}
-
-async function discoverReactFlows(projectRoot: string): Promise<DiscoveredFlow[]> {
-	const flows: DiscoveredFlow[] = [];
-	const srcDir = path.join(projectRoot, "src");
-
-	if (await dirExists(srcDir)) {
-		for (const subdir of ["pages", "views", "routes", "screens"]) {
-			const dir = path.join(srcDir, subdir);
-			if (await dirExists(dir)) {
-				const files = await findReactComponents(dir);
-				for (const file of files) {
-					const name = path.basename(file, path.extname(file));
-					const flowName = componentToFlowName(name);
-					flows.push({
-						name: flowName,
-						description: `User flow for ${name}`,
-						priority: inferPriority(name),
-						entryPoint: `/${name.toLowerCase()}`,
-						components: [file],
-					});
-				}
-			}
-		}
-	}
-
-	return flows;
-}
-
-async function discoverGenericFlows(projectRoot: string): Promise<DiscoveredFlow[]> {
-	return [
-		{
-			name: "Homepage",
-			description: "Main landing page flow",
-			priority: "high",
-			entryPoint: "/",
-		},
-	];
-}
-
-async function discoverCommonFlows(projectRoot: string): Promise<DiscoveredFlow[]> {
-	const flows: DiscoveredFlow[] = [];
-	const commonPatterns = [
-		{ pattern: /auth|login|signin/i, name: "Authentication", priority: "critical" },
-		{ pattern: /signup|register/i, name: "User Registration", priority: "critical" },
-		{ pattern: /checkout|payment/i, name: "Checkout", priority: "critical" },
-		{ pattern: /cart|basket/i, name: "Shopping Cart", priority: "high" },
-		{ pattern: /profile|account|settings/i, name: "User Profile", priority: "medium" },
-		{ pattern: /search/i, name: "Search", priority: "high" },
-		{ pattern: /dashboard/i, name: "Dashboard", priority: "high" },
-	];
-
-	const srcDir = path.join(projectRoot, "src");
-	const appDir = path.join(projectRoot, "app");
-
-	for (const dir of [srcDir, appDir]) {
-		if (await dirExists(dir)) {
-			const files = await walkDir(dir, 3);
-
-			for (const { pattern, name, priority } of commonPatterns) {
-				const matchingFile = files.find((f) => pattern.test(f));
-				if (matchingFile && !flows.some((f) => f.name === name)) {
-					flows.push({
-						name,
-						description: `${name} user flow`,
-						priority,
-						components: [matchingFile],
-					});
-				}
-			}
-		}
-	}
-
-	return flows;
-}
-
-// ============================================================================
-// Next.js Helpers
-// ============================================================================
-
-async function findNextJsAppPages(appDir: string): Promise<{ route: string; file: string }[]> {
-	const pages: { route: string; file: string }[] = [];
-
-	async function scan(dir: string, route: string): Promise<void> {
-		const entries = await fs.readdir(dir, { withFileTypes: true });
-
-		for (const entry of entries) {
-			const fullPath = path.join(dir, entry.name);
-
-			if (entry.isDirectory()) {
-				if (entry.name.startsWith("_") || entry.name === "api") continue;
-
-				const newRoute = entry.name.startsWith("(") ? route : `${route}/${entry.name}`;
-
-				await scan(fullPath, newRoute);
-			} else if (entry.name === "page.tsx" || entry.name === "page.js") {
-				pages.push({
-					route: route || "/",
-					file: path.relative(appDir, fullPath),
-				});
-			}
-		}
-	}
-
-	await scan(appDir, "");
-	return pages;
-}
-
-async function findNextJsPages(pagesDir: string): Promise<{ route: string; file: string }[]> {
-	const pages: { route: string; file: string }[] = [];
-
-	async function scan(dir: string, route: string): Promise<void> {
-		const entries = await fs.readdir(dir, { withFileTypes: true });
-
-		for (const entry of entries) {
-			const fullPath = path.join(dir, entry.name);
-
-			if (entry.isDirectory()) {
-				if (entry.name === "api" || entry.name.startsWith("_")) continue;
-				await scan(fullPath, `${route}/${entry.name}`);
-			} else if (/\.(tsx?|jsx?)$/.test(entry.name) && !entry.name.startsWith("_")) {
-				const name = entry.name.replace(/\.(tsx?|jsx?)$/, "");
-				const pageRoute = name === "index" ? route || "/" : `${route}/${name}`;
-				pages.push({
-					route: pageRoute,
-					file: path.relative(pagesDir, fullPath),
-				});
-			}
-		}
-	}
-
-	await scan(pagesDir, "");
-	return pages;
-}
-
-async function findReactComponents(dir: string): Promise<string[]> {
-	const components: string[] = [];
-	const entries = await fs.readdir(dir, { withFileTypes: true });
-
-	for (const entry of entries) {
-		if (entry.isFile() && /\.(tsx?|jsx?)$/.test(entry.name)) {
-			components.push(path.join(dir, entry.name));
-		}
-	}
-
-	return components;
-}
-
-async function walkDir(dir: string, maxDepth: number, currentDepth: number = 0): Promise<string[]> {
-	if (currentDepth >= maxDepth) return [];
-
-	const files: string[] = [];
-
-	try {
-		const entries = await fs.readdir(dir, { withFileTypes: true });
-
-		for (const entry of entries) {
-			const fullPath = path.join(dir, entry.name);
-
-			if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules") {
-				files.push(...(await walkDir(fullPath, maxDepth, currentDepth + 1)));
-			} else if (entry.isFile()) {
-				files.push(fullPath);
-			}
-		}
-	} catch {
-		// Ignore permission errors
-	}
-
-	return files;
+interface BootstrapProgress {
+	stage: "init" | "validating" | "git-scan" | "extract-personas" | "extract-flows" | "extract-steps" | "complete" | "error";
+	currentChunk: number;
+	totalChunks: number;
+	personasExtracted: number;
+	flowsExtracted: number;
+	stepsExtracted: number;
+	message: string;
+	percentage: number;
+	error?: string;
 }
 
 // ============================================================================
 // Helpers
 // ============================================================================
-
-function pagePathToFlowName(route: string): string {
-	if (route === "/" || route === "") return "Homepage";
-
-	const parts = route.split("/").filter(Boolean);
-	return (
-		parts
-			.map((p) => p.replace(/^\[.*\]$/, "").replace(/-/g, " "))
-			.filter(Boolean)
-			.map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-			.join(" ") || "Page"
-	);
-}
-
-function componentToFlowName(name: string): string {
-	return name
-		.replace(/([A-Z])/g, " $1")
-		.replace(/[-_]/g, " ")
-		.trim()
-		.split(" ")
-		.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-		.join(" ");
-}
-
-function inferPriority(routeOrName: string): string {
-	const critical = /auth|login|checkout|payment|signup|register/i;
-	const high = /cart|dashboard|search|profile|account/i;
-	const medium = /settings|admin|help/i;
-
-	if (critical.test(routeOrName)) return "critical";
-	if (high.test(routeOrName)) return "high";
-	if (medium.test(routeOrName)) return "medium";
-	if (routeOrName === "/" || routeOrName === "") return "high";
-	return "medium";
-}
 
 async function readPackageJson(projectDir: string): Promise<PackageJson | null> {
 	const pkgPath = path.join(projectDir, "package.json");
@@ -660,13 +881,69 @@ async function dirExists(p: string): Promise<boolean> {
 	}
 }
 
-function createDefaultConfig(projectName: string, framework: string, projectId: string | null) {
+/**
+ * Detect the default branch from git repository.
+ * Tries multiple methods to find the correct default branch.
+ */
+function detectDefaultBranch(projectDir: string): string {
+	// Method 1: Try to get the default branch from the remote
+	try {
+		const result = execSync("git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'", {
+			cwd: projectDir,
+			encoding: "utf-8",
+		}).trim();
+		if (result) return result;
+	} catch {
+		// Fall through to next method
+	}
+
+	// Method 2: Check which branch we're currently on
+	try {
+		const currentBranch = execSync("git branch --show-current", {
+			cwd: projectDir,
+			encoding: "utf-8",
+		}).trim();
+		if (currentBranch) return currentBranch;
+	} catch {
+		// Fall through to next method
+	}
+
+	// Method 3: Check if main exists
+	try {
+		execSync("git rev-parse --verify main", {
+			cwd: projectDir,
+			encoding: "utf-8",
+			stdio: "pipe",
+		});
+		return "main";
+	} catch {
+		// Fall through to next method
+	}
+
+	// Method 4: Check if master exists
+	try {
+		execSync("git rev-parse --verify master", {
+			cwd: projectDir,
+			encoding: "utf-8",
+			stdio: "pipe",
+		});
+		return "master";
+	} catch {
+		// Fall through to default
+	}
+
+	// Default fallback
+	return "main";
+}
+
+function createDefaultConfig(projectName: string, framework: string, projectId: string | null, branch: string) {
 	return {
 		version: "1.0",
 		project: {
 			id: projectId,
 			name: projectName,
 			framework,
+			branch,
 		},
 		observer: {
 			watch: {
@@ -695,6 +972,10 @@ function inferDefaultWatchPaths(framework: string): string[] {
 	}
 }
 
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function createPerceoReadme(projectName: string): string {
 	return `# Perceo configuration for ${projectName}
 
@@ -702,11 +983,11 @@ This folder was generated by \`perceo init\`.
 
 ## Files
 
-- \`.perceo/config.json\` — project configuration
+- \`.perceo/config.json\` — project configuration (project id, name, branch). Access to this project is controlled in Perceo Cloud; only users added as members can view or change project data.
 
 ## Commands
 
-- \`perceo analyze --base main\` — analyze PR changes and find affected flows
+- \`perceo analyze --base <branch>\` — analyze PR changes and find affected flows
 - \`perceo flows list\` — list all discovered flows
 
 ## Environment Variables
@@ -720,7 +1001,10 @@ PERCEO_SUPABASE_ANON_KEY=your-anon-key
 `;
 }
 
-function generateGitHubWorkflow(): string {
+function generateGitHubWorkflow(branch: string): string {
+	// Support both the configured branch and common alternatives (main/master)
+	const branches = Array.from(new Set([branch, "main", "master"])).join(", ");
+
 	return `# Perceo CI - Automated regression impact analysis
 # Generated by perceo init
 # Docs: https://perceo.dev/docs/ci
@@ -729,9 +1013,9 @@ name: Perceo CI
 
 on:
   pull_request:
-    branches: [main, master]
+    branches: [${branches}]
   push:
-    branches: [main, master]
+    branches: [${branches}]
 
 permissions:
   contents: read

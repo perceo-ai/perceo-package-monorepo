@@ -1,0 +1,29 @@
+You are analyzing a {{framework}} codebase to identify user flows for a specific persona.
+
+Target Persona:
+Name: {{personaName}}
+Description: {{personaDescription}}
+Behaviors:
+{{personaBehaviors}}
+
+Review this git diff and identify ALL user flows (multi-step processes or journeys) that this persona would go through.
+
+Look for:
+- Routes and navigation patterns relevant to this persona
+- Multi-step forms or wizards this persona would use
+- State machines and workflows for this persona's actions
+- User journeys specific to this persona (e.g., signup, checkout, onboarding, admin tasks)
+- Feature workflows that span multiple pages/components
+
+Git Diff:
+```
+{{diff}}
+```
+
+Identify all flows for this persona. Each flow should have:
+- A clear, descriptive name
+- The exact persona name: "{{personaName}}"
+- A detailed description of what the flow accomplishes
+- A list of trigger conditions that initiate the flow
+
+If no flows are found for this persona, return an empty flows array.

@@ -45,6 +45,9 @@ RUN pnpm --filter @perceo/temporal-worker... build
 # Use Debian-based image (required by Temporal core-bridge native libs)
 FROM node:20 AS runner
 
+# Install git (required for git operations in activities)
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
 # Install pnpm and configure for better memory/resource usage
 RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
 
@@ -74,6 +77,7 @@ RUN pnpm install --prod --frozen-lockfile
 # Copy built artifacts from builder
 COPY --from=builder /app/apps/temporal-worker/dist ./apps/temporal-worker/dist
 COPY --from=builder /app/packages/observer-engine/dist ./packages/observer-engine/dist
+COPY --from=builder /app/packages/supabase/dist ./packages/supabase/dist
 
 # Set working directory to worker
 WORKDIR /app/apps/temporal-worker

@@ -32,17 +32,23 @@ export async function authorizeGitHub(): Promise<GitHubAuth> {
 	const spinner = ora("Requesting device authorization...").start();
 
 	// Step 1: Request device and user codes
-	const deviceResponse = await fetch("https://github.com/login/device/code", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Accept: "application/json",
-		},
-		body: JSON.stringify({
-			client_id: GITHUB_CLIENT_ID,
-			scope: "repo",
-		}),
-	});
+	let deviceResponse: Response;
+	try {
+		deviceResponse = await fetch("https://github.com/login/device/code", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "application/json",
+			},
+			body: JSON.stringify({
+				client_id: GITHUB_CLIENT_ID,
+				scope: "repo",
+			}),
+		});
+	} catch (fetchError) {
+		spinner.fail("Failed to connect to GitHub");
+		throw new Error(`Network error connecting to GitHub: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
+	}
 
 	if (!deviceResponse.ok) {
 		spinner.fail("Failed to request device code");
@@ -69,18 +75,25 @@ export async function authorizeGitHub(): Promise<GitHubAuth> {
 	while (Date.now() < expiresAt) {
 		await new Promise((resolve) => setTimeout(resolve, interval * 1000));
 
-		const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Accept: "application/json",
-			},
-			body: JSON.stringify({
-				client_id: GITHUB_CLIENT_ID,
-				device_code,
-				grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-			}),
-		});
+		let tokenResponse: Response;
+		try {
+			tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "application/json",
+				},
+				body: JSON.stringify({
+					client_id: GITHUB_CLIENT_ID,
+					device_code,
+					grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+				}),
+			});
+		} catch (fetchError) {
+			// Network error during polling, continue to retry
+			console.log(chalk.yellow(`\n  Warning: Network error polling GitHub, retrying...`));
+			continue;
+		}
 
 		const tokenData = await tokenResponse.json();
 
@@ -117,13 +130,18 @@ export async function authorizeGitHub(): Promise<GitHubAuth> {
  */
 export async function createRepositorySecret(token: string, owner: string, repo: string, secretName: string, secretValue: string): Promise<void> {
 	// Step 1: Get the repository's public key for encrypting secrets
-	const keyResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/secrets/public-key`, {
-		headers: {
-			Authorization: `Bearer ${token}`,
-			Accept: "application/vnd.github+json",
-			"X-GitHub-Api-Version": "2022-11-28",
-		},
-	});
+	let keyResponse: Response;
+	try {
+		keyResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/secrets/public-key`, {
+			headers: {
+				Authorization: `Bearer ${token}`,
+				Accept: "application/vnd.github+json",
+				"X-GitHub-Api-Version": "2022-11-28",
+			},
+		});
+	} catch (fetchError) {
+		throw new Error(`Network error connecting to GitHub API: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
+	}
 
 	if (!keyResponse.ok) {
 		const error = await keyResponse.text();
@@ -136,19 +154,24 @@ export async function createRepositorySecret(token: string, owner: string, repo:
 	const encryptedValue = await encryptSecret(secretValue, publicKey);
 
 	// Step 3: Create or update the secret
-	const secretResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/secrets/${secretName}`, {
-		method: "PUT",
-		headers: {
-			Authorization: `Bearer ${token}`,
-			Accept: "application/vnd.github+json",
-			"X-GitHub-Api-Version": "2022-11-28",
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-			encrypted_value: encryptedValue,
-			key_id: keyId,
-		}),
-	});
+	let secretResponse: Response;
+	try {
+		secretResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/secrets/${secretName}`, {
+			method: "PUT",
+			headers: {
+				Authorization: `Bearer ${token}`,
+				Accept: "application/vnd.github+json",
+				"X-GitHub-Api-Version": "2022-11-28",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				encrypted_value: encryptedValue,
+				key_id: keyId,
+			}),
+		});
+	} catch (fetchError) {
+		throw new Error(`Network error creating repository secret: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
+	}
 
 	if (!secretResponse.ok) {
 		const error = await secretResponse.text();
@@ -215,20 +238,20 @@ export function isGitRepository(projectDir: string): boolean {
 
 /**
  * Parse a git remote URL and return GitHub owner/repo if it's a GitHub URL.
+ * Supports HTTPS, SSH with github.com, and SSH with custom host aliases (e.g. git@github-personal:owner/repo).
  */
 function parseGitHubRemoteUrl(url: string): GitHubRemote | null {
-	// Parse various GitHub URL formats:
-	// - https://github.com/owner/repo.git
-	// - git@github.com:owner/repo.git
-	// - ssh://git@github.com/owner/repo.git
-
-	let match = url.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
+	const trimmed = url.trim();
+	// HTTPS and SSH with explicit github.com: https://github.com/owner/repo, git@github.com:owner/repo
+	let match = trimmed.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
 	if (match && match[1] && match[2]) {
 		return { owner: match[1], repo: match[2] };
 	}
-	match = url.match(/git@github\.com:([\w-]+)\/([\w.-]+?)(\.git)?$/);
-	if (match && match[1] && match[2]) {
-		return { owner: match[1], repo: match[2] };
+	// SSH with any host that contains "github" (e.g. github.com, github-personal, github-work)
+	// Format: git@<host>:owner/repo or git@<host>:owner/repo.git
+	match = trimmed.match(/^git@([^:]+):([\w-]+)\/([\w.-]+?)(\.git)?$/);
+	if (match && match[1] && match[2] && match[3] && /github/i.test(match[1])) {
+		return { owner: match[2], repo: match[3] };
 	}
 	return null;
 }
@@ -293,12 +316,14 @@ export async function checkRepositoryPermissions(token: string, owner: string, r
 		});
 
 		if (!response.ok) {
+			console.log(chalk.yellow(`  Warning: Failed to check repository permissions (HTTP ${response.status})`));
 			return false;
 		}
 
 		const data = await response.json();
 		return data.permissions?.admin || data.permissions?.push || false;
-	} catch {
+	} catch (fetchError) {
+		console.log(chalk.yellow(`  Warning: Network error checking repository permissions: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`));
 		return false;
 	}
 }

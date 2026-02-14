@@ -24,6 +24,7 @@ import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
+import { delCommand } from "./commands/del.js";
 import { analyzeCommand } from "./commands/analyze.js";
 import { keysCommand } from "./commands/keys.js";
 
@@ -34,6 +35,7 @@ program.name("perceo").description("Intelligent regression testing through multi
 program.addCommand(loginCommand);
 program.addCommand(logoutCommand);
 program.addCommand(initCommand);
+program.addCommand(delCommand);
 program.addCommand(analyzeCommand);
 program.addCommand(keysCommand);
 

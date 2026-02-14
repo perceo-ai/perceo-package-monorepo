@@ -1,4 +1,5 @@
-// Export all workflows for registration with Temporal worker
+/**
+ * Export all workflows for Temporal worker registration
+ */
+
 export * from './bootstrap-project.workflow';
-export * from './analyze-changes.workflow';
-export * from './watch-mode.workflow';
