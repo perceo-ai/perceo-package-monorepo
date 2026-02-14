@@ -155,8 +155,8 @@ importers:
   packages/observer-engine:
     dependencies:
       '@perceo/perceo':
-        specifier: 0.2.0
-        version: 0.2.0
+        specifier: workspace:*
+        version: link:../../apps/cli
       '@perceo/supabase':
         specifier: workspace:*
         version: link:../supabase
@@ -928,16 +928,6 @@ packages:
 
   '@openrouter/sdk@0.1.27':
     resolution: {integrity: sha512-RH//L10bSmc81q25zAZudiI4kNkLgxF2E+WU42vghp3N6TEvZ6F0jK7uT3tOxkEn91gzmMw9YVmDENy7SJsajQ==}
-
-  '@perceo/observer-engine@1.0.0':
-    resolution: {integrity: sha512-tjacUrRXCGIfrUEsT/FL15n1lbIZklWKwrHXeLc743F+HzZdxPI//WGK6p6rfTQE4+yJimz4sb/2CudDl0tANw==}
-    peerDependencies:
-      '@perceo/perceo': 0.2.0
-
-  '@perceo/perceo@0.2.0':
-    resolution: {integrity: sha512-7b+caWAuQX6B+H4ykBli18ARfWQns/6E8TEP6rYER6RzysMEloHri9RY9qeXTkVzWYMUmh8vIUVYbhMu2YSRZQ==}
-    engines: {node: '>=18'}
-    hasBin: true
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -4592,17 +4582,6 @@ snapshots:
   '@openrouter/sdk@0.1.27':
     dependencies:
       zod: 4.3.6
-
-  '@perceo/observer-engine@1.0.0(@perceo/perceo@0.2.0)':
-    dependencies:
-      '@perceo/perceo': 0.2.0
-
-  '@perceo/perceo@0.2.0':
-    dependencies:
-      '@perceo/observer-engine': 1.0.0(@perceo/perceo@0.2.0)
-      chalk: 5.6.2
-      commander: 12.1.0
-      ora: 8.2.0
 
   '@protobufjs/aspromise@1.1.2': {}
 

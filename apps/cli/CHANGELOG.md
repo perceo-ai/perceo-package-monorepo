@@ -1,5 +1,12 @@
 # @perceo/perceo
 
+## 0.3.1
+
+### Patch Changes
+
+- fix
+  - @perceo/observer-engine@2.0.1
+
 ## 0.3.0
 
 ### Minor Changes
