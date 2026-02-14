@@ -17,7 +17,6 @@ permissions:
     id-token: write # Required for npm OIDC trusted publishing
     contents: write
     packages: write
-    pull-requests: write # Required for changesets/action to create PRs
 
 jobs:
     releaseCli:
@@ -26,6 +25,8 @@ jobs:
         steps:
             - name: Checkout
               uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.ref }}
 
             - name: Setup
               uses: ./.github/setup
@@ -36,12 +37,18 @@ jobs:
             - name: Build CLI
               run: pnpm build --filter ./apps/cli
 
-            - name: Publish ${{inputs.tag || 'latest' }}
-              uses: changesets/action@v1
-              with:
-                  version: pnpm changeset version
-                  publish: pnpm changeset publish
-                  commit: "ci(changesets): version packages"
-                  setupGitUser: false
+            - name: Version packages
+              run: pnpm changeset version
+
+            - name: Commit and push version bump
+              run: |
+                  if [ -n "$(git status --porcelain)" ]; then
+                      git add -A
+                      git commit -m "ci(changesets): version packages"
+                      git push origin HEAD:${{ github.ref_name }}
+                  fi
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Publish to npm
+              run: pnpm changeset publish
