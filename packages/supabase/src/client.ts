@@ -198,15 +198,23 @@ export class PerceoDataClient {
 		return data as Project | null;
 	}
 
+	/**
+	 * Create a project and add the current user as owner (via RPC).
+	 * Uses create_project_with_owner so the creator is always a member; requires
+	 * migration 20260214020000_create_project_with_owner_rpc.sql to be applied.
+	 */
 	async createProject(project: ProjectInsert): Promise<Project> {
-		const { data, error } = await this.supabase
-			.from("projects")
-			.insert(project as any)
-			.select()
-			.single();
+		const { data, error } = await this.supabase.rpc("create_project_with_owner", {
+			p_name: project.name,
+			p_framework: project.framework ?? null,
+			p_config: project.config ?? {},
+			p_git_remote_url: project.git_remote_url ?? null,
+		});
 
 		if (error) throw error;
-		return data as Project;
+		const row = Array.isArray(data) ? data[0] : data;
+		if (!row) throw new Error("create_project_with_owner returned no row");
+		return row as Project;
 	}
 
 	async upsertProject(project: ProjectInsert): Promise<Project> {

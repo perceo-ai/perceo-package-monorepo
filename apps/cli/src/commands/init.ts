@@ -31,6 +31,19 @@ const CONFIG_FILE = "config.json";
 /** Frameworks we support for now (React/website). More will be added later. */
 const SUPPORTED_FRAMEWORKS = ["nextjs", "react", "remix"];
 
+/** Format Supabase/Postgrest or Error for display (avoids "[object Object]"). */
+function formatDbError(err: unknown): string {
+	if (err instanceof Error) return err.message;
+	const o = err as { message?: string; code?: string; details?: string };
+	if (o && typeof o.message === "string") {
+		const parts = [o.message];
+		if (typeof o.code === "string") parts.push(`(code: ${o.code})`);
+		if (typeof o.details === "string") parts.push(o.details);
+		return parts.join(" ");
+	}
+	return String(err);
+}
+
 export const initCommand = new Command("init")
 	.description("Initialize Perceo in your project and discover flows")
 	.option("-d, --dir <directory>", "Project directory", process.cwd())
@@ -158,7 +171,7 @@ export const initCommand = new Command("init")
 			} catch (dbError) {
 				spinner.fail("Failed to query project");
 				console.error(chalk.red("\nDatabase error details:"));
-				console.error(chalk.gray(`  Error: ${dbError instanceof Error ? dbError.message : String(dbError)}`));
+				console.error(chalk.gray(`  ${formatDbError(dbError)}`));
 				throw new Error("Failed to query project from database");
 			}
 
@@ -175,7 +188,7 @@ export const initCommand = new Command("init")
 				} catch (createError) {
 					spinner.fail("Failed to create project");
 					console.error(chalk.red("\nDatabase error details:"));
-					console.error(chalk.gray(`  Error: ${createError instanceof Error ? createError.message : String(createError)}`));
+					console.error(chalk.gray(`  ${formatDbError(createError)}`));
 					throw new Error("Failed to create project in database");
 				}
 			} else {
@@ -517,7 +530,7 @@ export const initCommand = new Command("init")
 			} catch (dbError) {
 				spinner.fail("Failed to query project");
 				console.error(chalk.red("\nDatabase error details:"));
-				console.error(chalk.gray(`  Error: ${dbError instanceof Error ? dbError.message : String(dbError)}`));
+				console.error(chalk.gray(`  ${formatDbError(dbError)}`));
 				throw new Error("Failed to query project from database");
 			}
 
@@ -533,7 +546,7 @@ export const initCommand = new Command("init")
 				} catch (createError) {
 					spinner.fail("Failed to create project");
 					console.error(chalk.red("\nDatabase error details:"));
-					console.error(chalk.gray(`  Error: ${createError instanceof Error ? createError.message : String(createError)}`));
+					console.error(chalk.gray(`  ${formatDbError(createError)}`));
 					throw new Error("Failed to create project in database");
 				}
 			} else if (gitRemoteUrl && project.git_remote_url !== gitRemoteUrl) {
