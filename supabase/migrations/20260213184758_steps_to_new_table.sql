@@ -1,0 +1,24 @@
+-- Steps Table Migration
+-- This migration was created to mark the transition from storing steps as JSON in flows.graph_data
+-- to using the dedicated steps table (created in 20260213013048_init-db.sql)
+--
+-- The steps table is already created in the initial migration with the following structure:
+-- - id: UUID primary key
+-- - flow_id: UUID reference to flows table
+-- - sequence_order: int for ordering steps
+-- - name: text for step description
+-- - actions: jsonb array of action objects
+-- - expected_state: jsonb object for state assertions
+-- - timeout_ms: int for step timeout
+-- - retry_count: int for retry attempts
+-- - next_step_id: optional UUID reference for non-linear flows
+-- - branch_config: optional jsonb for conditional branching
+--
+-- This approach is safer than storing steps as JSON because:
+-- 1. Each step has its own row with proper foreign key constraints
+-- 2. Steps can be queried, filtered, and updated independently
+-- 3. Database constraints ensure data integrity
+-- 4. Indexing on flow_id + sequence_order enables fast queries
+-- 5. ON DELETE CASCADE ensures proper cleanup when flows are deleted
+--
+-- No schema changes needed - the table structure is already correct.

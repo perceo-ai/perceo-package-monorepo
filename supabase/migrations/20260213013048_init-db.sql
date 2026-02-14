@@ -507,7 +507,8 @@ ALTER TABLE code_changes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE analytics_connections ENABLE ROW LEVEL SECURITY;
 
 -- Helper function to check project membership
-CREATE OR REPLACE FUNCTION auth.is_project_member(p_project_id uuid)
+-- NOTE: Defined in the public schema because Supabase manages the auth schema
+CREATE OR REPLACE FUNCTION public.is_project_member(p_project_id uuid)
 RETURNS boolean AS $$
 BEGIN
   RETURN EXISTS (
@@ -519,7 +520,8 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Helper function to check project admin/owner
-CREATE OR REPLACE FUNCTION auth.is_project_admin(p_project_id uuid)
+-- NOTE: Defined in the public schema because Supabase manages the auth schema
+CREATE OR REPLACE FUNCTION public.is_project_admin(p_project_id uuid)
 RETURNS boolean AS $$
 BEGIN
   RETURN EXISTS (
@@ -534,97 +536,99 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- Projects policies
 CREATE POLICY "Users can view projects they're members of"
   ON projects FOR SELECT
-  USING (auth.is_project_member(id));
+  USING (public.is_project_member(id));
 
 CREATE POLICY "Project admins can update projects"
   ON projects FOR UPDATE
-  USING (auth.is_project_admin(id));
+  USING (public.is_project_admin(id));
 
 CREATE POLICY "Authenticated users can create projects"
   ON projects FOR INSERT
-  WITH CHECK (auth.uid() IS NOT NULL);
+  -- Allow backend services and API-key based flows to create projects.
+  -- Higher-level APIs are responsible for enforcing who can create projects.
+  WITH CHECK (true);
 
 -- Project members policies
 CREATE POLICY "Users can view members of their projects"
   ON project_members FOR SELECT
-  USING (auth.is_project_member(project_id));
+  USING (public.is_project_member(project_id));
 
 CREATE POLICY "Project admins can manage members"
   ON project_members FOR ALL
-  USING (auth.is_project_admin(project_id));
+  USING (public.is_project_admin(project_id));
 
 -- Generic project-scoped policies (for most tables)
 CREATE POLICY "Project members can view personas"
   ON personas FOR SELECT
-  USING (auth.is_project_member(project_id));
+  USING (public.is_project_member(project_id));
 
 CREATE POLICY "Project admins can manage personas"
   ON personas FOR ALL
-  USING (auth.is_project_admin(project_id));
+  USING (public.is_project_admin(project_id));
 
 CREATE POLICY "Project members can view flows"
   ON flows FOR SELECT
-  USING (auth.is_project_member(project_id));
+  USING (public.is_project_member(project_id));
 
 CREATE POLICY "Project admins can manage flows"
   ON flows FOR ALL
-  USING (auth.is_project_admin(project_id));
+  USING (public.is_project_admin(project_id));
 
 CREATE POLICY "Project members can view steps"
   ON steps FOR SELECT
   USING (EXISTS (
-    SELECT 1 FROM flows WHERE flows.id = steps.flow_id AND auth.is_project_member(flows.project_id)
+    SELECT 1 FROM flows WHERE flows.id = steps.flow_id AND public.is_project_member(flows.project_id)
   ));
 
 CREATE POLICY "Project members can view flow metrics"
   ON flow_metrics FOR SELECT
   USING (EXISTS (
-    SELECT 1 FROM flows WHERE flows.id = flow_metrics.flow_id AND auth.is_project_member(flows.project_id)
+    SELECT 1 FROM flows WHERE flows.id = flow_metrics.flow_id AND public.is_project_member(flows.project_id)
   ));
 
 CREATE POLICY "Project members can view test runs"
   ON test_runs FOR SELECT
-  USING (auth.is_project_member(project_id));
+  USING (public.is_project_member(project_id));
 
 CREATE POLICY "Project members can insert test runs"
   ON test_runs FOR INSERT
-  WITH CHECK (auth.is_project_member(project_id));
+  WITH CHECK (public.is_project_member(project_id));
 
 CREATE POLICY "Project members can view analytics events"
   ON analytics_events FOR SELECT
-  USING (auth.is_project_member(project_id));
+  USING (public.is_project_member(project_id));
 
 CREATE POLICY "Project members can view insights"
   ON insights FOR SELECT
-  USING (auth.is_project_member(project_id));
+  USING (public.is_project_member(project_id));
 
 CREATE POLICY "Project admins can manage insights"
   ON insights FOR UPDATE
-  USING (auth.is_project_admin(project_id));
+  USING (public.is_project_admin(project_id));
 
 CREATE POLICY "Project members can view predictions"
   ON predictions FOR SELECT
-  USING (auth.is_project_member(project_id));
+  USING (public.is_project_member(project_id));
 
 CREATE POLICY "Project members can view events"
   ON events FOR SELECT
-  USING (auth.is_project_member(project_id));
+  USING (public.is_project_member(project_id));
 
 CREATE POLICY "Project members can insert events"
   ON events FOR INSERT
-  WITH CHECK (auth.is_project_member(project_id));
+  WITH CHECK (public.is_project_member(project_id));
 
 CREATE POLICY "Project members can view code changes"
   ON code_changes FOR SELECT
-  USING (auth.is_project_member(project_id));
+  USING (public.is_project_member(project_id));
 
 CREATE POLICY "Project members can view analytics connections"
   ON analytics_connections FOR SELECT
-  USING (auth.is_project_member(project_id));
+  USING (public.is_project_member(project_id));
 
 CREATE POLICY "Project admins can manage analytics connections"
   ON analytics_connections FOR ALL
-  USING (auth.is_project_admin(project_id));
+  USING (public.is_project_admin(project_id));
 
 -- ============================================================================
 -- REALTIME SUBSCRIPTIONS

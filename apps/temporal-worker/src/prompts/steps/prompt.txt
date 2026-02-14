@@ -1,0 +1,19 @@
+You are analyzing a {{framework}} codebase to extract detailed steps for a user flow.
+
+Flow Name: {{flowName}}
+Flow Description: {{flowDescription}}
+
+Review this code and break down the flow into sequential steps with specific actions, expected state changes, and UI selectors.
+
+Code Context:
+```
+{{codeContext}}
+```
+
+Break down the flow into a sequence of actionable steps. Each step should include:
+- A sequential step number (1, 2, 3, ...)
+- A clear user action (e.g., "Click login button", "Fill email field with value")
+- The expected state or outcome after performing the action
+- Optional CSS selectors or identifiers for the UI elements involved
+
+Order steps sequentially as they would occur in the user flow. Be specific and actionable. If no steps can be determined, return an empty steps array.

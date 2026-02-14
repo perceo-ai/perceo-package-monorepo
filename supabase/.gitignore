@@ -3,6 +3,12 @@
 .temp
 
 # dotenvx
+.env
 .env.keys
 .env.local
 .env.*.local
+.env.deploy
+
+# Edge Functions
+functions/.env
+functions/.env.local

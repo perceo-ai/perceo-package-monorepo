@@ -170,10 +170,15 @@ gcloud run deploy perceo-temporal-worker \
   --set-env-vars PERCEO_TEMPORAL_ADDRESS="${PERCEO_TEMPORAL_ADDRESS}" \
   --set-env-vars PERCEO_TEMPORAL_API_KEY="${PERCEO_TEMPORAL_API_KEY}" \
   --set-env-vars PERCEO_TEMPORAL_NAMESPACE="${PERCEO_TEMPORAL_NAMESPACE}" \
-  --set-env-vars PERCEO_TEMPORAL_ENABLED="${PERCEO_TEMPORAL_ENABLED}" \
-  --set-env-vars PERCEO_TEMPORAL_TASK_QUEUE="${PERCEO_TEMPORAL_TASK_QUEUE}" \
-  --set-env-vars PERCEO_TEMPORAL_REGIONAL_ENDPOINT="${PERCEO_TEMPORAL_REGIONAL_ENDPOINT}" 
+  --set-env-vars PERCEO_TEMPORAL_ENABLED="${PERCEO_TEMPORAL_ENABLED:-true}" \
+  --set-env-vars PERCEO_TEMPORAL_TASK_QUEUE="${PERCEO_TEMPORAL_TASK_QUEUE:-perceo-task-queue}" \
+  --set-env-vars PERCEO_SUPABASE_URL="${PERCEO_SUPABASE_URL}" \
+  --set-env-vars PERCEO_SUPABASE_SERVICE_ROLE_KEY="${PERCEO_SUPABASE_SERVICE_ROLE_KEY}" \
+  --set-env-vars PERCEO_WORKER_API_KEY="${PERCEO_WORKER_API_KEY:-}" \
+  --set-env-vars PERCEO_OPEN_ROUTER_API_KEY="${PERCEO_OPEN_ROUTER_API_KEY:-}"
 
-echo "Deployment complete. Worker will connect to Temporal Cloud using PERCEO_* env vars."
-echo "Ensure PERCEO_TEMPORAL_ADDRESS, PERCEO_TEMPORAL_NAMESPACE, and TLS certs are configured."
-echo "See docs/temporal_worker_deployment.md for details."
+echo "Deployment complete!"
+echo ""
+echo "Worker HTTP API is now available at the Cloud Run URL."
+echo "Set PERCEO_WORKER_API_URL in your .env file to the Cloud Run URL."
+echo "Example: PERCEO_WORKER_API_URL=https://perceo-temporal-worker-xxxxx-uc.a.run.app"

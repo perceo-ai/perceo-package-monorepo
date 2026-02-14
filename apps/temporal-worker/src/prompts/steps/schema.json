@@ -1,0 +1,40 @@
+{
+  "name": "steps_extraction",
+  "strict": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "steps": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "stepNumber": {
+              "type": "integer",
+              "description": "Sequential step number (1, 2, 3, ...)"
+            },
+            "action": {
+              "type": "string",
+              "description": "The user action to perform (e.g., 'Click login button', 'Fill email field')"
+            },
+            "expectedState": {
+              "type": "string",
+              "description": "Expected state or outcome after this action (e.g., 'Login modal opens', 'Dashboard loads')"
+            },
+            "selectors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "CSS selectors or identifiers for UI elements involved in this step"
+            }
+          },
+          "required": ["stepNumber", "action", "expectedState"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["steps"],
+    "additionalProperties": false
+  }
+}

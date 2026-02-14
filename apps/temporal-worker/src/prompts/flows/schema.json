@@ -1,0 +1,40 @@
+{
+  "name": "flows_extraction",
+  "strict": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "flows": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The flow name (e.g., 'User Registration Flow', 'Admin Dashboard Access')"
+            },
+            "personaName": {
+              "type": "string",
+              "description": "The name of the persona this flow belongs to (must match exactly)"
+            },
+            "description": {
+              "type": "string",
+              "description": "Detailed description of what this flow does"
+            },
+            "triggerConditions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Conditions or actions that trigger this flow"
+            }
+          },
+          "required": ["name", "personaName", "description", "triggerConditions"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["flows"],
+    "additionalProperties": false
+  }
+}

@@ -1,115 +1,59 @@
-import { Context } from '@temporalio/activity';
-import { execSync } from 'child_process';
+import { getAllCommits, cloneRepository, cleanupRepository } from "../utils/git-ops";
 
-export interface GitDiffFile {
-  path: string;
-  status: 'added' | 'deleted' | 'modified' | 'renamed';
-  oldPath?: string;
+export interface CloneRepositoryInput {
+	gitRemoteUrl: string;
+	branch: string;
+}
+
+export interface CloneRepositoryOutput {
+	projectDir: string;
 }
 
 /**
- * Computes Git diff between two commits
+ * Clone a git repository to a temporary directory
+ * Returns the path to the cloned repository
  */
-export async function computeGitDiff(
-  projectRoot: string,
-  baseSha: string,
-  headSha: string
-): Promise<GitDiffFile[]> {
-  Context.current().heartbeat();
+export async function cloneRepositoryActivity(input: CloneRepositoryInput): Promise<CloneRepositoryOutput> {
+	const { gitRemoteUrl, branch } = input;
 
-  try {
-    // Execute git diff command
-    const output = execSync(
-      `git diff --name-status ${baseSha} ${headSha}`,
-      {
-        cwd: projectRoot,
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024, // 10MB buffer
-      }
-    );
+	console.log(`Cloning repository: ${gitRemoteUrl} (branch: ${branch})`);
 
-    // Parse the output
-    const lines = output.trim().split('\n').filter(line => line.length > 0);
-    const files: GitDiffFile[] = [];
+	const projectDir = cloneRepository(gitRemoteUrl, branch);
 
-    for (const line of lines) {
-      const parts = line.split('\t');
-      const statusCode = parts[0];
-      const path = parts[1];
+	console.log(`Repository cloned to: ${projectDir}`);
 
-      let status: GitDiffFile['status'];
-      let oldPath: string | undefined;
-
-      // Map git status codes to semantic names
-      if (statusCode === 'A') {
-        status = 'added';
-      } else if (statusCode === 'D') {
-        status = 'deleted';
-      } else if (statusCode === 'M') {
-        status = 'modified';
-      } else if (statusCode?.startsWith('R')) {
-        // Renamed files: R100  old/path    new/path
-        status = 'renamed';
-        const newPath = parts[2];
-        if (path && newPath) {
-          oldPath = path;
-          files.push({ path: newPath, status, oldPath });
-        }
-        continue;
-      } else {
-        // Unknown status, treat as modified
-        status = 'modified';
-      }
-
-      if (path) {
-        files.push({ path, status, oldPath });
-      }
-    }
-
-    return files;
-  } catch (error: any) {
-    if (error.status === 128) {
-      // Git command failed - likely invalid refs
-      throw new Error(
-        `Git diff failed: Invalid refs ${baseSha}..${headSha}. ${error.message}`
-      );
-    }
-    throw new Error(`Git diff failed: ${error.message}`);
-  }
+	return { projectDir };
 }
 
 /**
- * Gets the current Git branch name
+ * Clean up a cloned repository
  */
-export async function getCurrentBranch(projectRoot: string): Promise<string> {
-  Context.current().heartbeat();
+export async function cleanupRepositoryActivity(input: { projectDir: string }): Promise<void> {
+	const { projectDir } = input;
+	console.log(`Cleaning up repository: ${projectDir}`);
+	cleanupRepository(projectDir);
+}
 
-  try {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      cwd: projectRoot,
-      encoding: 'utf-8',
-    }).trim();
-
-    return branch;
-  } catch (error: any) {
-    throw new Error(`Failed to get current branch: ${error.message}`);
-  }
+export interface GetCommitHistoryInput {
+	projectDir: string;
+	branch: string;
 }
 
 /**
- * Gets the latest commit SHA
+ * Get all commit SHAs from repository in chronological order
+ *
+ * This activity is called once at the start of the workflow to get
+ * the entire commit history. The workflow then loops through these
+ * commits in chunks without additional activity calls.
  */
-export async function getLatestCommitSha(projectRoot: string): Promise<string> {
-  Context.current().heartbeat();
+export async function getCommitHistoryActivity(input: GetCommitHistoryInput): Promise<string[]> {
+	const { projectDir, branch } = input;
 
-  try {
-    const sha = execSync('git rev-parse HEAD', {
-      cwd: projectRoot,
-      encoding: 'utf-8',
-    }).trim();
+	console.log(`Getting commit history for ${projectDir} (branch: ${branch})`);
 
-    return sha;
-  } catch (error: any) {
-    throw new Error(`Failed to get latest commit SHA: ${error.message}`);
-  }
+	const commits = getAllCommits(projectDir, branch);
+
+	console.log(`Found ${commits.length} commits`);
+
+	return commits;
 }

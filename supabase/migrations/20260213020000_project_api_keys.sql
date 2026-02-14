@@ -24,6 +24,7 @@ CREATE TABLE project_api_keys (
   -- 'flows:write' - Create/update flows
   -- 'insights:read' - Read insights
   -- 'events:publish' - Publish events
+  -- 'workflows:start' - Start Temporal workflows
   
   -- Audit
   created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -43,8 +44,10 @@ CREATE TABLE project_api_keys (
 -- Indexes
 CREATE INDEX idx_project_api_keys_project ON project_api_keys(project_id);
 CREATE INDEX idx_project_api_keys_prefix ON project_api_keys(key_prefix);
-CREATE INDEX idx_project_api_keys_active ON project_api_keys(project_id) 
-  WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now());
+-- Index active (non-revoked) keys; exclude time-dependent predicate to keep it immutable-safe.
+-- Queries can still filter on expires_at > now() while using this index.
+CREATE INDEX idx_project_api_keys_active ON project_api_keys(project_id, expires_at) 
+  WHERE revoked_at IS NULL;
 
 -- Enable RLS
 ALTER TABLE project_api_keys ENABLE ROW LEVEL SECURITY;
@@ -52,11 +55,11 @@ ALTER TABLE project_api_keys ENABLE ROW LEVEL SECURITY;
 -- Policies
 CREATE POLICY "Project members can view API keys (metadata only)"
   ON project_api_keys FOR SELECT
-  USING (auth.is_project_member(project_id));
+  USING (public.is_project_member(project_id));
 
 CREATE POLICY "Project admins can manage API keys"
   ON project_api_keys FOR ALL
-  USING (auth.is_project_admin(project_id));
+  USING (public.is_project_admin(project_id));
 
 -- ============================================================================
 -- API KEY VALIDATION FUNCTION
@@ -123,7 +126,7 @@ CREATE POLICY "Project admins can view API key audit logs"
   USING (EXISTS (
     SELECT 1 FROM project_api_keys pak
     WHERE pak.id = project_api_key_audit.key_id
-    AND auth.is_project_admin(pak.project_id)
+    AND public.is_project_admin(pak.project_id)
   ));
 
 -- ============================================================================

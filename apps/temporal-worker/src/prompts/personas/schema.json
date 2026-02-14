@@ -1,0 +1,36 @@
+{
+  "name": "personas_extraction",
+  "strict": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "personas": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The persona name (e.g., 'Admin User', 'Guest Visitor')"
+            },
+            "description": {
+              "type": "string",
+              "description": "Brief description of this persona"
+            },
+            "behaviors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "List of typical behaviors for this persona"
+            }
+          },
+          "required": ["name", "description", "behaviors"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["personas"],
+    "additionalProperties": false
+  }
+}

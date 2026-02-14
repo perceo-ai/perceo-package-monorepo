@@ -1,12 +1,10 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
-import { PerceoDataClient, type ApiKeyScope, getSupabaseUrl, getSupabaseAnonKey } from "@perceo/supabase";
-import { loadConfig } from "../config.js";
-import { isLoggedIn } from "../auth.js";
+import { type ApiKeyScope } from "@perceo/supabase";
+import { ensureProjectAccess } from "../projectAccess.js";
 
-export const keysCommand = new Command("keys")
-	.description("Manage project API keys for CI/CD authentication");
+export const keysCommand = new Command("keys").description("Manage project API keys for CI/CD authentication");
 
 // ============================================================================
 // perceo keys list
@@ -17,32 +15,11 @@ keysCommand
 	.description("List all API keys for the current project")
 	.option("-a, --all", "Include revoked and expired keys", false)
 	.action(async (options: { all: boolean }) => {
-		const projectDir = process.cwd();
-
-		const loggedIn = await isLoggedIn(projectDir);
-		if (!loggedIn) {
-			console.error(chalk.red("You must log in first. Run ") + chalk.cyan("perceo login"));
-			process.exit(1);
-		}
-
 		const spinner = ora("Loading API keys...").start();
 
 		try {
-			const config = await loadConfig({ projectDir });
-			const projectId = config?.project?.id;
-
-			if (!projectId) {
-				spinner.fail("No project ID found. Run perceo init first.");
-				process.exit(1);
-			}
-
-			const supabaseUrl = getSupabaseUrl();
-			const supabaseKey = getSupabaseAnonKey();
-
-			const client = new PerceoDataClient({ supabaseUrl, supabaseKey, projectId });
-			const keys = options.all 
-				? await client.getApiKeys(projectId)
-				: await client.getActiveApiKeys(projectId);
+			const { client, projectId } = await ensureProjectAccess();
+			const keys = options.all ? await client.getApiKeys(projectId) : await client.getActiveApiKeys(projectId);
 
 			spinner.stop();
 
@@ -92,34 +69,13 @@ keysCommand
 	.option("-s, --scopes <scopes>", "Comma-separated list of scopes", "ci:analyze,ci:test,flows:read,insights:read,events:publish")
 	.option("-e, --expires <days>", "Number of days until expiration (default: never)")
 	.action(async (options: { name: string; scopes: string; expires?: string }) => {
-		const projectDir = process.cwd();
-
-		const loggedIn = await isLoggedIn(projectDir);
-		if (!loggedIn) {
-			console.error(chalk.red("You must log in first. Run ") + chalk.cyan("perceo login"));
-			process.exit(1);
-		}
-
 		const spinner = ora("Creating API key...").start();
 
 		try {
-			const config = await loadConfig({ projectDir });
-			const projectId = config?.project?.id;
+			const { client, projectId } = await ensureProjectAccess({ requireAdmin: true });
 
-			if (!projectId) {
-				spinner.fail("No project ID found. Run perceo init first.");
-				process.exit(1);
-			}
-
-			const supabaseUrl = getSupabaseUrl();
-			const supabaseKey = getSupabaseAnonKey();
-
-			const client = new PerceoDataClient({ supabaseUrl, supabaseKey, projectId });
-
-			const scopes = options.scopes.split(",").map(s => s.trim()) as ApiKeyScope[];
-			const expiresAt = options.expires 
-				? new Date(Date.now() + parseInt(options.expires, 10) * 24 * 60 * 60 * 1000)
-				: undefined;
+			const scopes = options.scopes.split(",").map((s) => s.trim()) as ApiKeyScope[];
+			const expiresAt = options.expires ? new Date(Date.now() + parseInt(options.expires, 10) * 24 * 60 * 60 * 1000) : undefined;
 
 			const { key, keyRecord } = await client.createApiKey(projectId, {
 				name: options.name,
@@ -162,33 +118,14 @@ keysCommand
 	.argument("<prefix>", "Key prefix to revoke (e.g., prc_abc12345)")
 	.option("-r, --reason <reason>", "Reason for revocation")
 	.action(async (prefix: string, options: { reason?: string }) => {
-		const projectDir = process.cwd();
-
-		const loggedIn = await isLoggedIn(projectDir);
-		if (!loggedIn) {
-			console.error(chalk.red("You must log in first. Run ") + chalk.cyan("perceo login"));
-			process.exit(1);
-		}
-
 		const spinner = ora("Revoking API key...").start();
 
 		try {
-			const config = await loadConfig({ projectDir });
-			const projectId = config?.project?.id;
-
-			if (!projectId) {
-				spinner.fail("No project ID found. Run perceo init first.");
-				process.exit(1);
-			}
-
-			const supabaseUrl = getSupabaseUrl();
-			const supabaseKey = getSupabaseAnonKey();
-
-			const client = new PerceoDataClient({ supabaseUrl, supabaseKey, projectId });
+			const { client, projectId } = await ensureProjectAccess({ requireAdmin: true });
 			const keys = await client.getApiKeys(projectId);
 
 			// Find key by prefix
-			const keyToRevoke = keys.find(k => k.key_prefix === prefix || k.key_prefix.startsWith(prefix));
+			const keyToRevoke = keys.find((k) => k.key_prefix === prefix || k.key_prefix.startsWith(prefix));
 
 			if (!keyToRevoke) {
 				spinner.fail(`No key found with prefix: ${prefix}`);
@@ -237,4 +174,3 @@ function formatDate(dateStr: string): string {
 		minute: "2-digit",
 	});
 }
-

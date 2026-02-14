@@ -3,10 +3,7 @@ export interface TemporalConfig {
 	address?: string;
 	namespace?: string;
 	taskQueue?: string;
-	tls?: {
-		certPath: string;
-		keyPath: string;
-	};
+	apiKey?: string;
 }
 
 export interface ObserverEngineConfig {
