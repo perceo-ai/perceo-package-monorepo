@@ -9,11 +9,14 @@ Navigation graph (page-to-page edges from Link, navigate, router.push):
 Auth/role hints (middleware, layout guards, protected routes), if any:
 {{authSnippets}}
 
-Identify distinct user flows. Each flow must be ONE specific action isolated to one page or at most a couple of pages (e.g., "Submit login form", "Add item to cart", "View dashboard").
+Identify a small set of essential, distinct user flows. Each flow must be ONE specific action isolated to one page or at most a couple of pages (e.g., "Submit login form", "Add item to cart", "View dashboard").
 
 Requirements:
-- Each flow: a clear name, short description, and the 1-2 page paths (from the route list) that this flow uses.
-- Identify how flows connect: when one flow leads to another or shares pages, list connectedFlowIds (names of flows that this flow connects to).
-- Prefer many small flows (one action each) over few large multi-page journeys.
+- Prefer FEWER flows. Err on the side of not creating too many. For simple or small repositories, 5–15 flows is usually enough. Users may be charged per flow, so avoid unnecessary or redundant flows.
+- Each flow: a clear name, short description, and the 1–2 page paths (from the route list) that this flow uses.
+- Do NOT create duplicate or near-duplicate flows (e.g. do not create both "View dashboard" and "Open dashboard", or "Login" and "Sign in" — pick one).
+- Do NOT create separate flows for minor variations of the same action (e.g. one "Submit login" flow, not "Login with email" and "Login with SSO" unless they are genuinely different user actions).
+- Identify how flows connect only when it matters: list connectedFlowIds (names of flows this flow connects to) when one flow clearly leads to another; otherwise leave empty.
+- Focus on flows that represent real user actions that matter for testing, not every possible navigation path.
 
-Return flows with: name, description, pages (array of 1-2 route paths), connectedFlowIds (array of flow names this flow connects to, may be empty).
+Return flows with: name, description, pages (array of 1–2 route paths), connectedFlowIds (array of flow names this flow connects to, may be empty).

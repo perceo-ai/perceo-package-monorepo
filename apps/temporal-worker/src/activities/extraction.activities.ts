@@ -74,8 +74,32 @@ export async function discoverRouteGraphActivity(input: DiscoverRouteGraphInput)
 	return result;
 }
 
+/** Max flows to keep after dedupe/cap. Users may be charged per flow; err on the side of fewer. */
+const MAX_FLOWS_CAP = 20;
+/** When route count is small, use a lower cap to avoid overwhelming simple repos. */
+const MAX_FLOWS_WHEN_ROUTES_SMALL = 12;
+const SMALL_ROUTE_COUNT = 15;
+
+/**
+ * Dedupe flows by same page set (keep first), then cap total. Reduces overlap and cost.
+ */
+function dedupeAndCapFlows(flows: IdentifiedFlow[], routeCount: number): IdentifiedFlow[] {
+	const seen = new Set<string>();
+	const deduped: IdentifiedFlow[] = [];
+	for (const f of flows) {
+		const key = [...(f.pages ?? [])].sort().join("|");
+		if (seen.has(key)) continue;
+		seen.add(key);
+		deduped.push(f);
+	}
+	const cap = routeCount <= SMALL_ROUTE_COUNT ? MAX_FLOWS_WHEN_ROUTES_SMALL : MAX_FLOWS_CAP;
+	if (deduped.length <= cap) return deduped;
+	return deduped.slice(0, cap);
+}
+
 /**
  * Phase 2: Identify flows from route graph (1-2 LLM calls).
+ * Results are deduped (same pages = one flow) and capped to avoid too many flows.
  */
 export async function identifyFlowsFromGraphActivity(input: IdentifyFlowsFromGraphInput): Promise<IdentifiedFlow[]> {
 	const { routeGraph, framework, authSnippets, anthropicApiKey, useOpenRouter } = input;
@@ -88,11 +112,20 @@ export async function identifyFlowsFromGraphActivity(input: IdentifyFlowsFromGra
 	const routeList = routeGraph.routes.map((r) => r.path).join("\n");
 	const navGraphStr = routeGraph.navigationGraph.map((e) => `${e.from} -> ${e.to}`).join("\n");
 	const claude = new ClaudeClient(anthropicApiKey, useOpenRouter);
-	const flows = await claude.identifyFlowsFromRouteGraph(routeList, navGraphStr, framework, authSnippets);
-	log.info("Flows identified from graph", {
-		flowCount: flows.length,
-		flowNames: flows.map((f) => f.name),
-	});
+	const rawFlows = await claude.identifyFlowsFromRouteGraph(routeList, navGraphStr, framework, authSnippets);
+	const flows = dedupeAndCapFlows(rawFlows, routeGraph.routes.length);
+	if (rawFlows.length !== flows.length) {
+		log.info("Flows reduced after dedupe/cap", {
+			before: rawFlows.length,
+			after: flows.length,
+			flowNames: flows.map((f) => f.name),
+		});
+	} else {
+		log.info("Flows identified from graph", {
+			flowCount: flows.length,
+			flowNames: flows.map((f) => f.name),
+		});
+	}
 	return flows;
 }
 

@@ -6,8 +6,10 @@ Flows (each is one action, 1-2 pages):
 Auth/role hints (who can access what), if any:
 {{authSnippets}}
 
-For each flow, determine which user personas would use it. Create personas that represent real user types (e.g., "Guest", "Authenticated User", "Admin", "Support Agent"). Then assign each flow to one or more personas by listing flow names under each persona.
+For each flow, determine which user personas would use it. Create a small number of personas that represent real user types (e.g., "Guest", "Authenticated User", "Admin").
 
-Return:
-- personas: array of { name, description, behaviors, flowNames } where flowNames is the list of flow names this persona uses.
-- Ensure every flow is assigned to at least one persona.
+Requirements:
+- Prefer FEWER personas. For simple applications, use at most 3–5 personas. Merge similar roles (e.g. "Admin" and "Super Admin" → one "Admin"; "Logged-in User" and "Member" → one "Authenticated User").
+- Do NOT create a separate persona for each flow or for minor role variations. Group flows under a small set of broad personas.
+- Assign each flow to one or more personas. Ensure every flow is assigned to at least one persona.
+- Return: personas array of { name, description, behaviors, flowNames } where flowNames is the list of flow names this persona uses.

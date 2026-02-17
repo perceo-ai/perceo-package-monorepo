@@ -31,7 +31,7 @@ const CONFIG_FILE = "config.json";
 /** Frameworks we support for now (React/website). More will be added later. */
 const SUPPORTED_FRAMEWORKS = ["nextjs", "react", "remix"];
 
-/** Format Supabase/Postgrest or Error for display (avoids "[object Object]"). */
+/** Format Supabase/Postgres or Error for display (avoids "[object Object]"). */
 function formatDbError(err: unknown): string {
 	if (err instanceof Error) return err.message;
 	const o = err as { message?: string; code?: string; details?: string };
@@ -241,7 +241,7 @@ export const initCommand = new Command("init")
 				spinner.fail("Database key generation failed");
 				console.error(chalk.red("\n  ✗ CRITICAL: Cannot generate workflow authorization key in database"));
 
-				// Handle Supabase PostgrestError objects properly
+				// Handle Supabase PostgresError objects properly
 				if (keyError && typeof keyError === "object") {
 					const err = keyError as any;
 					console.error(chalk.gray(`    Error code: ${err.code || "N/A"}`));
@@ -667,7 +667,7 @@ export const initCommand = new Command("init")
 					// This ensures init never fails and users still get a usable key
 					console.log(chalk.yellow("\n  ⚠ Database key generation failed, using local fallback"));
 
-					// Handle Supabase PostgrestError objects properly
+					// Handle Supabase PostgresError objects properly
 					if (error && typeof error === "object") {
 						const err = error as any;
 						console.error(chalk.gray(`    Error code: ${err.code || "N/A"}`));
@@ -847,7 +847,7 @@ interface BootstrapProgress {
 
 /**
  * Fetch flows and personas for the project and render a simple ASCII graph
- * (personas → flows → pages) so the user can see the graph created by init.
+ * (personas → flows only) so the user can see the graph created by init.
  */
 async function renderBootstrapGraph(client: InstanceType<typeof PerceoDataClient>, projectId: string): Promise<void> {
 	try {
@@ -883,7 +883,7 @@ async function renderBootstrapGraph(client: InstanceType<typeof PerceoDataClient
 		});
 
 		const width = 52;
-		console.log("\n" + chalk.bold("  Graph (personas → flows → pages)"));
+		console.log("\n" + chalk.bold("  Graph (personas → flows)"));
 		console.log(chalk.cyan("  " + "═".repeat(width)));
 
 		for (const pid of personaIds) {
@@ -897,10 +897,7 @@ async function renderBootstrapGraph(client: InstanceType<typeof PerceoDataClient
 				const isLastFlow = i === list.length - 1;
 				const flowBranch = isLastFlow ? "└" : "├";
 				const flowPrefix = "  │  ";
-				const pages = (flow?.graph_data?.pages as string[] | undefined) ?? [];
-				const pageStr = pages.length > 0 ? pages.join(" → ") : "(no pages)";
 				console.log(chalk.gray(flowPrefix + flowBranch + "─ ") + chalk.cyan(flow?.name ?? "Unknown"));
-				console.log(chalk.gray(flowPrefix + "   ") + chalk.gray(pageStr));
 			}
 		}
 
@@ -910,10 +907,7 @@ async function renderBootstrapGraph(client: InstanceType<typeof PerceoDataClient
 				const flow = noPersona[i];
 				const isLastFlow = i === noPersona.length - 1;
 				const flowBranch = isLastFlow ? "└" : "├";
-				const pages = (flow?.graph_data?.pages as string[] | undefined) ?? [];
-				const pageStr = pages.length > 0 ? pages.join(" → ") : "(no pages)";
 				console.log(chalk.gray("  │  " + flowBranch + "─ ") + chalk.cyan(flow?.name ?? "Unknown"));
-				console.log(chalk.gray("  │     ") + chalk.gray(pageStr));
 			}
 		}
 

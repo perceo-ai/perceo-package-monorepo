@@ -122,7 +122,7 @@ export class ClaudeClient {
 	private getModelId(): string {
 		if (this.useOpenRouter) {
 			// Use Claude 3.5 Sonnet via OpenRouter
-			return "anthropic/claude-3.5-sonnet";
+			return "anthropic/claude-sonnet-4.5";
 		}
 		return "claude-sonnet-4-5-20250929";
 	}

@@ -1,5 +1,12 @@
 # @perceo/observer-engine
 
+## 3.0.2
+
+### Patch Changes
+
+- Updated dependencies
+  - @perceo/perceo@0.4.2
+
 ## 3.0.1
 
 ### Patch Changes

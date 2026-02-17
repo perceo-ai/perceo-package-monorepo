@@ -1,5 +1,12 @@
 # @perceo/temporal-worker
 
+## 0.3.2
+
+### Patch Changes
+
+- Change LLM to sonnet 4.5 for cost and better performance
+  - @perceo/observer-engine@3.0.2
+
 ## 0.3.1
 
 ### Patch Changes
