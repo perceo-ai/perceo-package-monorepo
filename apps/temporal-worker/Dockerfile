@@ -41,6 +41,9 @@ COPY packages/typescript-config ./packages/typescript-config
 # Use ... to include all dependencies in the build
 RUN pnpm --filter @perceo/temporal-worker... build
 
+# Ensure all prompt configs are in dist (avoids cache omitting them)
+RUN cp -r /app/apps/temporal-worker/src/prompts /app/apps/temporal-worker/dist/prompts
+
 # Stage 2: Production
 # Use Debian-based image (required by Temporal core-bridge native libs)
 FROM node:20 AS runner

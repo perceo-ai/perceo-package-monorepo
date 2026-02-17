@@ -10,6 +10,14 @@ Error: Personas prompt config not loaded
     at extractPersonasFromDiffActivity
 ```
 
+or:
+
+```
+Error: flows-from-graph prompt config not loaded
+    at ClaudeClient.identifyFlowsFromRouteGraph
+    at identifyFlowsFromGraphActivity
+```
+
 This occurred because the prompt files (`prompt.txt` and `schema.json`) in `src/prompts/` were not being copied to the `dist/` directory during the build process.
 
 ## Root Cause
@@ -23,19 +31,21 @@ const promptsDir = join(__dirname, "../prompts");
 // Reads from: dist/prompts/personas/prompt.txt
 //             dist/prompts/flows/prompt.txt
 //             dist/prompts/steps/prompt.txt
+//             dist/prompts/flows-from-graph/...
+//             dist/prompts/personas-assign/...
 ```
 
-When these files were missing, the `loadPrompts()` method would fail silently (only logging errors), and later calls to `extractPersonasFromDiff()` would throw the error.
+When these files were missing, the `loadPrompts()` method would fail silently (only logging errors), and later calls would throw the error.
 
 ## Solution
 
-Updated the build script in `apps/temporal-worker/package.json` to copy the prompts directory after TypeScript compilation:
+1. **Local build** – The build script in `apps/temporal-worker/package.json` copies the prompts directory after TypeScript compilation:
 
-```json
-"build": "tsc && cp -r src/prompts dist/prompts"
-```
+    ```json
+    "build": "tsc && cp -r src/prompts dist/prompts"
+    ```
 
-This ensures that all prompt template and schema files are available in the `dist/` directory when the worker runs.
+2. **Docker build** – The Dockerfile explicitly copies `src/prompts` into `dist/prompts` after the pnpm build, so the image always has all prompt configs even if a cached build omitted them.
 
 ## Additional Improvements
 
@@ -58,7 +68,11 @@ After the fix:
     - `dist/prompts/flows/schema.json`
     - `dist/prompts/steps/prompt.txt`
     - `dist/prompts/steps/schema.json`
-3. Docker builds will include these files since they're now in the `dist/` directory
+    - `dist/prompts/flows-from-graph/prompt.txt`
+    - `dist/prompts/flows-from-graph/schema.json`
+    - `dist/prompts/personas-assign/prompt.txt`
+    - `dist/prompts/personas-assign/schema.json`
+3. Docker builds will include these files since the Dockerfile copies them into `dist/` after build
 
 ## Next Steps
 
@@ -67,16 +81,3 @@ To deploy the fix:
 1. Build the worker: `pnpm worker:build`
 2. Build and push Docker image (or let CI do it)
 3. Deploy to Cloud Run: `pnpm worker:deploy`
-
-The new logs will show:
-
-```
-Loading prompts from: /app/apps/temporal-worker/dist/prompts
-Loading personas prompt from: /app/apps/temporal-worker/dist/prompts/personas/prompt.txt
-Successfully loaded personas prompt config
-Loading flows prompt from: /app/apps/temporal-worker/dist/prompts/flows/prompt.txt
-Successfully loaded flows prompt config
-Loading steps prompt from: /app/apps/temporal-worker/dist/prompts/steps/prompt.txt
-Successfully loaded steps prompt config
-Loaded 3 prompt configs: personas, flows, steps
-```
