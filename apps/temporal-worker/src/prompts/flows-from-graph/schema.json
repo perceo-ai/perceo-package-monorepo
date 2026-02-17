@@ -9,12 +9,12 @@
 				"items": {
 					"type": "object",
 					"properties": {
-						"name": { "type": "string", "description": "Flow name, one action (e.g. 'Submit login form')" },
+						"name": { "type": "string", "description": "Flow name, meaningful journey (e.g. 'Complete checkout', 'Sign in and reach dashboard')" },
 						"description": { "type": "string", "description": "What this flow accomplishes" },
 						"pages": {
 							"type": "array",
 							"items": { "type": "string" },
-							"description": "1-2 route paths from the route list (e.g. ['/login', '/dashboard'])"
+							"description": "Route paths this flow uses, typically 2-5 (e.g. ['/login', '/dashboard'])"
 						},
 						"connectedFlowIds": {
 							"type": "array",

@@ -490,10 +490,10 @@ export const initCommand = new Command("init")
 
 			spinner.succeed("Bootstrap complete!");
 			console.log(chalk.green("\n✓ Bootstrap successful:"));
-			console.log(chalk.gray(`  Personas: ${temporalResult.personasExtracted}`));
-			console.log(chalk.gray(`  Flows: ${temporalResult.flowsExtracted}`));
-			console.log(chalk.gray(`  Steps: ${temporalResult.stepsExtracted}`));
-			console.log(chalk.gray(`  Commits: ${temporalResult.totalCommitsProcessed}`));
+			console.log(chalk.gray(`  Personas created (this run): ${temporalResult.personasExtracted}`));
+			console.log(chalk.gray(`  Flows created (this run): ${temporalResult.flowsExtracted}`));
+			console.log(chalk.gray(`  Steps created (this run): ${temporalResult.stepsExtracted}`));
+			console.log(chalk.gray(`  Commits scanned (this run): ${temporalResult.totalCommitsProcessed}`));
 			console.log();
 
 			spinner.start("Finishing initialization...");
@@ -732,10 +732,22 @@ export const initCommand = new Command("init")
 			console.log(chalk.bold("Branch: ") + branch);
 			console.log(chalk.bold("Config: ") + path.relative(projectDir, perceoConfigPath));
 			console.log(chalk.bold("Project ID: ") + projectId);
-			console.log(chalk.bold("Flows discovered: ") + `${flowsDiscovered} (${flowsNew} new)`);
+			console.log(chalk.bold("Flows discovered in bootstrap: ") + `${flowsDiscovered} (${flowsNew} new)`);
 
 			// Show ASCII graph of personas → flows → pages (from bootstrap)
 			await renderBootstrapGraph(client, projectId);
+
+			// Also show current totals from Perceo Cloud so users understand how this run
+			// relates to any previously bootstrapped data for the project.
+			try {
+				const [allFlows, allPersonas] = await Promise.all([client.getFlows(projectId), client.getPersonas(projectId)]);
+				console.log(chalk.bold("Perceo Cloud totals for this project:"));
+				console.log(chalk.gray(`  Flows (all runs): ${allFlows.length}`));
+				console.log(chalk.gray(`  Personas (all runs): ${allPersonas.length}`));
+				console.log();
+			} catch (totalsError) {
+				console.log(chalk.gray(`Could not fetch project totals from Perceo Cloud: ${totalsError instanceof Error ? totalsError.message : String(totalsError)}`));
+			}
 
 			// GitHub Actions setup output
 			if (githubAutoConfigured && workflowCreated) {

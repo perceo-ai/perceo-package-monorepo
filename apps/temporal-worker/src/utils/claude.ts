@@ -94,7 +94,7 @@ export class ClaudeClient {
 		const promptsDir = join(__dirname, "../prompts");
 		console.log(`Loading prompts from: ${promptsDir}`);
 
-		const promptTypes = ["personas", "flows", "steps", "flows-from-graph", "personas-assign"];
+		const promptTypes = ["personas", "flows", "steps", "flows-from-graph", "personas-assign", "personas-refine"];
 
 		for (const type of promptTypes) {
 			try {
@@ -475,6 +475,32 @@ export class ClaudeClient {
 
 		const raw = await this.sendPromptAndParse<{ personas: PersonaWithFlowNames[] }>(prompt);
 		return raw?.personas ?? [];
+	}
+
+	/**
+	 * Refinement pass: clean up personas and flows after initial extraction.
+	 * - Merge/remove redundant marketing personas (e.g. "Window Shopper", "Prospective Booker")
+	 * - Prefer 1–2 meaningful personas tied to real auth/role differences
+	 * - Drop junk "View X" / "Browse Y" pseudo-flows that are just single-page views
+	 */
+	async refinePersonasAndFlows(identifiedFlows: IdentifiedFlow[], personas: PersonaWithFlowNames[], framework: string): Promise<{ flows: IdentifiedFlow[]; personas: PersonaWithFlowNames[] }> {
+		const config = this.prompts.get("personas-refine");
+		if (!config) {
+			throw new Error("personas-refine prompt config not loaded");
+		}
+
+		const prompt =
+			this.renderTemplate(config.template, {
+				framework,
+				flowsJson: JSON.stringify(identifiedFlows).slice(0, 20000),
+				personasJson: JSON.stringify(personas).slice(0, 20000),
+			}) + this.buildSchemaInstructions(config);
+
+		const raw = await this.sendPromptAndParse<{ flows: IdentifiedFlow[]; personas: PersonaWithFlowNames[] }>(prompt);
+		return {
+			flows: raw?.flows ?? identifiedFlows,
+			personas: raw?.personas ?? personas,
+		};
 	}
 
 	private async sendPromptAndParse<T>(prompt: string): Promise<T | null> {

@@ -9,14 +9,14 @@ Navigation graph (page-to-page edges from Link, navigate, router.push):
 Auth/role hints (middleware, layout guards, protected routes), if any:
 {{authSnippets}}
 
-Identify a small set of essential, distinct user flows. Each flow must be ONE specific action isolated to one page or at most a couple of pages (e.g., "Submit login form", "Add item to cart", "View dashboard").
+Identify a SMALL set of essential user flows. Target 6–10 flows for typical apps. Each flow is a meaningful USER JOURNEY or multi-step action that spans 2+ pages or involves a meaningful transition (e.g., "Complete checkout", "Sign in and reach dashboard", "Browse packages and select one").
 
 Requirements:
-- Prefer FEWER flows. Err on the side of not creating too many. For simple or small repositories, 5–15 flows is usually enough. Users may be charged per flow, so avoid unnecessary or redundant flows.
-- Each flow: a clear name, short description, and the 1–2 page paths (from the route list) that this flow uses.
-- Do NOT create duplicate or near-duplicate flows (e.g. do not create both "View dashboard" and "Open dashboard", or "Login" and "Sign in" — pick one).
-- Do NOT create separate flows for minor variations of the same action (e.g. one "Submit login" flow, not "Login with email" and "Login with SSO" unless they are genuinely different user actions).
-- Identify how flows connect only when it matters: list connectedFlowIds (names of flows this flow connects to) when one flow clearly leads to another; otherwise leave empty.
-- Focus on flows that represent real user actions that matter for testing, not every possible navigation path.
+- STRICT: A flow is NOT a single page view. Do NOT create flows like "View homepage", "View package details", "View signin page", "View dashboard". Those are steps within flows, not flows themselves.
+- Each flow must be a multi-step journey or meaningful action: sign-in, checkout, browsing-and-selecting, onboarding, etc. Include all page paths the journey touches (typically 2–5 pages).
+- Prefer FEWER flows. 6–8 flows is ideal. Users are charged per flow; excess flows waste money and tokens.
+- Do NOT create duplicate or near-duplicate flows. Do NOT create separate flows for "View X" and "View Y" — merge them into broader flows (e.g., "Browse packages" covers homepage, listing, details).
+- connectedFlowIds: list flow names this flow leads to when relevant (e.g., "Sign in" connects to "View dashboard"); otherwise leave empty.
+- Focus on flows that matter for regression testing: auth, checkout, core browsing, dashboard access.
 
-Return flows with: name, description, pages (array of 1–2 route paths), connectedFlowIds (array of flow names this flow connects to, may be empty).
+Return flows with: name, description, pages (array of route paths this flow uses, typically 2–5), connectedFlowIds (array of flow names, may be empty).

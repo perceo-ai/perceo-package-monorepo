@@ -1,0 +1,75 @@
+{
+	"name": "personas_refine",
+	"strict": true,
+	"schema": {
+		"type": "object",
+		"properties": {
+			"flows": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"name": {
+							"type": "string",
+							"description": "Refined flow name, representing a meaningful multi-step user journey"
+						},
+						"description": {
+							"type": "string",
+							"description": "What this journey accomplishes from the user's perspective"
+						},
+						"pages": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"description": "Route paths this flow uses, typically 2–5"
+						},
+						"connectedFlowIds": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"description": "Names of flows this flow connects to, may be empty"
+						}
+					},
+					"required": ["name", "description", "pages"],
+					"additionalProperties": false
+				}
+			},
+			"personas": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"name": {
+							"type": "string",
+							"description": "Persona name (concise, not marketing-speak)"
+						},
+						"description": {
+							"type": "string",
+							"description": "Who this user is and how they relate to the app"
+						},
+						"behaviors": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"description": "3–7 behaviors that describe what this persona does in the app"
+						},
+						"flowNames": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"description": "Names of refined flows this persona uses"
+						}
+					},
+					"required": ["name", "description", "behaviors", "flowNames"],
+					"additionalProperties": false
+				}
+			}
+		},
+		"required": ["flows", "personas"],
+		"additionalProperties": false
+	}
+}

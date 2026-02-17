@@ -82,6 +82,10 @@ COPY --from=builder /app/apps/temporal-worker/dist ./apps/temporal-worker/dist
 COPY --from=builder /app/packages/observer-engine/dist ./packages/observer-engine/dist
 COPY --from=builder /app/packages/supabase/dist ./packages/supabase/dist
 
+# Hard guarantee: include ALL prompt templates/schemas in the runtime image,
+# even if the build script or tooling ever skips copying them into dist.
+COPY --from=builder /app/apps/temporal-worker/src/prompts ./apps/temporal-worker/dist/prompts
+
 # Set working directory to worker
 WORKDIR /app/apps/temporal-worker
 

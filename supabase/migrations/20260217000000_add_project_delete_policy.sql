@@ -3,7 +3,6 @@
 --
 -- The projects table had SELECT, UPDATE, INSERT policies but no DELETE policy.
 -- Without it, deleteProject() returned success but RLS silently affected 0 rows.
--- Only project owners/admins can delete projects (matches CLI behavior).
 
 CREATE POLICY "Project admins can delete projects"
   ON projects FOR DELETE

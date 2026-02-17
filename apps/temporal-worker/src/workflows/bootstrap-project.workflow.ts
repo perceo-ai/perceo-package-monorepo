@@ -10,6 +10,7 @@ const {
 	discoverRouteGraphActivity,
 	identifyFlowsFromGraphActivity,
 	assignPersonasToFlowsActivity,
+	refinePersonasAndFlowsActivity,
 	extractStepsForFlowActivity,
 	persistPersonasActivity,
 	persistFlowsActivity,
@@ -178,6 +179,19 @@ export async function bootstrapProjectWorkflow(input: BootstrapProjectInput): Pr
 			});
 		}
 
+		// Phase 3.5: Refine personas and flows with an additional LLM pass.
+		// This merges/removes redundant personas (e.g. "Window Shopper", "Prospective Booker")
+		// and drops junk single-page "View X" flows before persisting anything.
+		const refinement = await refinePersonasAndFlowsActivity({
+			identifiedFlows,
+			personas: personasWithFlows,
+			framework,
+			anthropicApiKey: llmApiKey,
+			useOpenRouter,
+		});
+		const refinedFlows = refinement.identifiedFlows;
+		personasWithFlows = refinement.personas;
+
 		// Persist personas (unless useCustomPersonas — already in DB)
 		const allPersonas = personasWithFlows.map((p) => ({ name: p.name, description: p.description, behaviors: p.behaviors }));
 		let personaIds: UUID[];
@@ -199,7 +213,9 @@ export async function bootstrapProjectWorkflow(input: BootstrapProjectInput): Pr
 			});
 		}
 
-		// Build flow records: each (persona, flowName) -> one flow with that personaId and identifiedFlow data
+		// Build flow records: each (persona, flowName) -> one flow with that personaId and identifiedFlow data.
+		// Cap: dedupe by flow name (keep first) and enforce max to avoid excess flows/tokens.
+		const MAX_FLOWS_PERSISTED = 10;
 		const flowRecords: Array<{
 			name: string;
 			description: string;
@@ -209,14 +225,18 @@ export async function bootstrapProjectWorkflow(input: BootstrapProjectInput): Pr
 			pages: string[];
 			connectedFlowIds: string[];
 		}> = [];
-		const nameToIdentifiedFlow = new Map(identifiedFlows.map((f) => [f.name, f]));
-		for (let i = 0; i < personasWithFlows.length; i++) {
+		const seenFlowNames = new Set<string>();
+		const nameToIdentifiedFlow = new Map(refinedFlows.map((f) => [f.name, f]));
+		for (let i = 0; i < personasWithFlows.length && flowRecords.length < MAX_FLOWS_PERSISTED; i++) {
 			const persona = personasWithFlows[i];
 			const personaId = personaIds[i];
 			if (!persona || !personaId) continue;
 			for (const flowName of persona.flowNames) {
+				if (flowRecords.length >= MAX_FLOWS_PERSISTED) break;
+				if (seenFlowNames.has(flowName)) continue;
 				const identified = nameToIdentifiedFlow.get(flowName);
 				if (!identified) continue;
+				seenFlowNames.add(flowName);
 				flowRecords.push({
 					name: identified.name,
 					description: identified.description,

@@ -1,15 +1,15 @@
 You are assigning personas to user flows in a {{framework}} application.
 
-Flows (each is one action, 1-2 pages):
+Flows:
 {{flowList}}
 
 Auth/role hints (who can access what), if any:
 {{authSnippets}}
 
-For each flow, determine which user personas would use it. Create a small number of personas that represent real user types (e.g., "Guest", "Authenticated User", "Admin").
+For each flow, determine which user personas would use it.
 
 Requirements:
-- Prefer FEWER personas. For simple applications, use at most 3–5 personas. Merge similar roles (e.g. "Admin" and "Super Admin" → one "Admin"; "Logged-in User" and "Member" → one "Authenticated User").
-- Do NOT create a separate persona for each flow or for minor role variations. Group flows under a small set of broad personas.
-- Assign each flow to one or more personas. Ensure every flow is assigned to at least one persona.
+- STRICT: Prefer 1 persona for simple applications. Only add more if there are genuinely different user types (e.g., guest vs authenticated, admin vs regular user). Target 1–2 personas. At most 3 for complex apps.
+- Do NOT create separate personas for "Authenticated User", "Guest Browser", "Prospective Booker", "Returning Customer" etc. when they overlap. Merge into one "User" or "Visitor" persona unless auth truly segments flows.
+- Assign each flow to at least one persona. Typically all flows go to one persona.
 - Return: personas array of { name, description, behaviors, flowNames } where flowNames is the list of flow names this persona uses.

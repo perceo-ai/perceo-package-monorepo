@@ -58,6 +58,14 @@ export interface AssignPersonasToFlowsInput {
 	useOpenRouter: boolean;
 }
 
+export interface RefinePersonasAndFlowsInput {
+	identifiedFlows: IdentifiedFlow[];
+	personas: PersonaWithFlowNames[];
+	framework: string;
+	anthropicApiKey: string;
+	useOpenRouter: boolean;
+}
+
 /**
  * Phase 1: Discover route graph (no LLM).
  */
@@ -74,11 +82,11 @@ export async function discoverRouteGraphActivity(input: DiscoverRouteGraphInput)
 	return result;
 }
 
-/** Max flows to keep after dedupe/cap. Users may be charged per flow; err on the side of fewer. */
-const MAX_FLOWS_CAP = 20;
+/** Max flows to keep after dedupe/cap. Users charged per flow; keep minimal to save tokens and cost. */
+const MAX_FLOWS_CAP = 10;
 /** When route count is small, use a lower cap to avoid overwhelming simple repos. */
-const MAX_FLOWS_WHEN_ROUTES_SMALL = 12;
-const SMALL_ROUTE_COUNT = 15;
+const MAX_FLOWS_WHEN_ROUTES_SMALL = 8;
+const SMALL_ROUTE_COUNT = 25;
 
 /**
  * Dedupe flows by same page set (keep first), then cap total. Reduces overlap and cost.
@@ -148,6 +156,34 @@ export async function assignPersonasToFlowsActivity(input: AssignPersonasToFlows
 		personaNames: personas.map((p) => p.name),
 	});
 	return personas;
+}
+
+/**
+ * Refinement pass after initial flow + persona assignment.
+ * Uses an additional LLM call to merge/remove redundant personas and drop junk flows
+ * before anything is persisted.
+ */
+export async function refinePersonasAndFlowsActivity(input: RefinePersonasAndFlowsInput): Promise<{ identifiedFlows: IdentifiedFlow[]; personas: PersonaWithFlowNames[] }> {
+	const { identifiedFlows, personas, framework, anthropicApiKey, useOpenRouter } = input;
+	const log = logger.withActivity("refinePersonasAndFlows");
+
+	log.info("Refining personas and flows", {
+		initialFlowCount: identifiedFlows.length,
+		initialPersonaCount: personas.length,
+		framework,
+		useOpenRouter,
+	});
+
+	const claude = new ClaudeClient(anthropicApiKey, useOpenRouter);
+	const refined = await claude.refinePersonasAndFlows(identifiedFlows, personas, framework);
+
+	log.info("Refinement complete", {
+		finalFlowCount: refined.flows.length,
+		finalPersonaCount: refined.personas.length,
+		personaNames: refined.personas.map((p) => p.name),
+	});
+
+	return { identifiedFlows: refined.flows, personas: refined.personas };
 }
 
 /**
