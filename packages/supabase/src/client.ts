@@ -6,6 +6,7 @@
  */
 
 import { createClient, type SupabaseClient, type RealtimeChannel } from "@supabase/supabase-js";
+import { getSupabaseUrl, getSupabaseAnonKey } from "./defaults.js";
 import type {
 	Flow,
 	FlowInsert,
@@ -81,15 +82,11 @@ export class PerceoDataClient {
 	}
 
 	/**
-	 * Create a client from environment variables
+	 * Create a client from environment variables. Uses embedded Perceo Cloud URL and anon key when unset.
 	 */
 	static fromEnv(projectId?: string): PerceoDataClient {
-		const supabaseUrl = process.env.PERCEO_SUPABASE_URL;
-		const supabaseKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY || process.env.PERCEO_SUPABASE_ANON_KEY;
-
-		if (!supabaseUrl || !supabaseKey) {
-			throw new Error("PERCEO_SUPABASE_URL and PERCEO_SUPABASE_ANON_KEY (or SERVICE_ROLE_KEY) are required");
-		}
+		const supabaseUrl = getSupabaseUrl();
+		const supabaseKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY || getSupabaseAnonKey();
 
 		return new PerceoDataClient({
 			supabaseUrl,
@@ -198,15 +195,23 @@ export class PerceoDataClient {
 		return data as Project | null;
 	}
 
+	/**
+	 * Create a project and add the current user as owner (via RPC).
+	 * Uses create_project_with_owner so the creator is always a member; requires
+	 * migration 20260214020000_create_project_with_owner_rpc.sql to be applied.
+	 */
 	async createProject(project: ProjectInsert): Promise<Project> {
-		const { data, error } = await this.supabase
-			.from("projects")
-			.insert(project as any)
-			.select()
-			.single();
+		const { data, error } = await this.supabase.rpc("create_project_with_owner", {
+			p_name: project.name,
+			p_framework: project.framework ?? null,
+			p_config: project.config ?? {},
+			p_git_remote_url: project.git_remote_url ?? null,
+		});
 
 		if (error) throw error;
-		return data as Project;
+		const row = Array.isArray(data) ? data[0] : data;
+		if (!row) throw new Error("create_project_with_owner returned no row");
+		return row as Project;
 	}
 
 	async upsertProject(project: ProjectInsert): Promise<Project> {

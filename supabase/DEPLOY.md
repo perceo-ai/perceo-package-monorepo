@@ -96,6 +96,39 @@ After deployment, you'll have two functions available:
 - **Purpose:** Queries workflow progress for real-time updates
 - **Auth:** Requires user JWT token
 
+### 3. `get-public-env`
+
+- **URL:** `https://YOUR_PROJECT.supabase.co/functions/v1/get-public-env`
+- **Purpose:** Returns public (non-secret) env key/values from the `public_env` table for CLI and new-PC setup. Used by the CLI to cache values next to auth and refresh when the CLI version changes.
+- **Auth:** None (returns only rows with `public = true`; do not store secrets in `public_env`).
+- **Deploy:** `supabase functions deploy get-public-env --project-ref YOUR_PROJECT_REF`
+- **Secrets:** Uses built-in `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (no extra secrets required).
+
+## Public env table and seeding
+
+The `public_env` table is created by migration `20260214100000_public_env.sql`. It has columns `key` (text), `value` (text), `public` (boolean). Only rows with `public = true` are returned by the `get-public-env` Edge Function.
+
+**Seeding:** The migration seeds Perceo Cloud values for `PERCEO_SUPABASE_URL` and `PERCEO_SUPABASE_ANON_KEY`. To add or update entries (e.g. a new public API base URL), use the Supabase SQL editor or a follow-up migration:
+
+```sql
+INSERT INTO public_env (key, value, public) VALUES
+  ('PERCEO_API_BASE_URL', 'https://api.perceo.ai', true)
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+```
+
+**Security:** Never store secrets (e.g. `PERCEO_API_KEY`, `PERCEO_SUPABASE_SERVICE_ROLE_KEY`, `PERCEO_WORKER_API_KEY`) in `public_env`. RLS is enabled with no anon SELECT; only the Edge Function (service role) reads the table.
+
+**What to add (public only):**
+
+| Key                        | Purpose                                                    |
+| -------------------------- | ---------------------------------------------------------- |
+| `PERCEO_SUPABASE_URL`      | Supabase project URL (already seeded)                      |
+| `PERCEO_SUPABASE_ANON_KEY` | Publishable anon key (already seeded)                      |
+| `PERCEO_WORKER_API_URL`    | Temporal Worker HTTP API base URL (already seeded)         |
+| `PERCEO_API_BASE_URL`      | Optional: Perceo API base URL if you expose a separate API |
+
+**Do not add:** `PERCEO_API_KEY`, `PERCEO_SUPABASE_SERVICE_ROLE_KEY`, `PERCEO_WORKER_API_KEY`, `PERCEO_ANTHROPIC_API_KEY`, `PERCEO_OPEN_ROUTER_API_KEY`, `PERCEO_TEMPORAL_API_KEY`, or any token/secret.
+
 ## Testing the Functions
 
 ### Test bootstrap-project
@@ -123,6 +156,23 @@ Expected response:
 {
 	"workflowId": "bootstrap-test-uuid-1234567890",
 	"message": "Bootstrap workflow started successfully"
+}
+```
+
+### Test get-public-env
+
+No auth required; returns a JSON object of public env key/values:
+
+```bash
+curl "$SUPABASE_URL/functions/v1/get-public-env"
+```
+
+Expected response (example):
+
+```json
+{
+	"PERCEO_SUPABASE_URL": "https://your-project.supabase.co",
+	"PERCEO_SUPABASE_ANON_KEY": "sb_publishable_..."
 }
 ```
 

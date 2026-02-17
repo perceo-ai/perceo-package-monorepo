@@ -1,6 +1,6 @@
 {
 	"name": "@perceo/observer-engine",
-	"version": "2.0.1",
+	"version": "3.0.1",
 	"description": "Observer Engine core used by the Perceo CLI for flow/persona bootstrap and change impact analysis.",
 	"keywords": [
 		"perceo",

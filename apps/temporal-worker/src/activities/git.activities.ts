@@ -1,4 +1,5 @@
 import { getAllCommits, cloneRepository, cleanupRepository } from "../utils/git-ops";
+import { logger } from "../logger";
 
 export interface CloneRepositoryInput {
 	gitRemoteUrl: string;
@@ -15,12 +16,13 @@ export interface CloneRepositoryOutput {
  */
 export async function cloneRepositoryActivity(input: CloneRepositoryInput): Promise<CloneRepositoryOutput> {
 	const { gitRemoteUrl, branch } = input;
+	const log = logger.withActivity("cloneRepository");
 
-	console.log(`Cloning repository: ${gitRemoteUrl} (branch: ${branch})`);
+	log.info("Cloning repository", { gitRemoteUrl, branch });
 
 	const projectDir = cloneRepository(gitRemoteUrl, branch);
 
-	console.log(`Repository cloned to: ${projectDir}`);
+	log.info("Repository cloned", { projectDir, gitRemoteUrl, branch });
 
 	return { projectDir };
 }
@@ -30,7 +32,7 @@ export async function cloneRepositoryActivity(input: CloneRepositoryInput): Prom
  */
 export async function cleanupRepositoryActivity(input: { projectDir: string }): Promise<void> {
 	const { projectDir } = input;
-	console.log(`Cleaning up repository: ${projectDir}`);
+	logger.info("Cleaning up repository", { activity: "cleanupRepository", projectDir });
 	cleanupRepository(projectDir);
 }
 
@@ -48,12 +50,13 @@ export interface GetCommitHistoryInput {
  */
 export async function getCommitHistoryActivity(input: GetCommitHistoryInput): Promise<string[]> {
 	const { projectDir, branch } = input;
+	const log = logger.withActivity("getCommitHistory");
 
-	console.log(`Getting commit history for ${projectDir} (branch: ${branch})`);
+	log.info("Getting commit history", { projectDir, branch });
 
 	const commits = getAllCommits(projectDir, branch);
 
-	console.log(`Found ${commits.length} commits`);
+	log.info("Commit history retrieved", { projectDir, branch, commitCount: commits.length });
 
 	return commits;
 }
