@@ -3,6 +3,7 @@ import { Client } from "@temporalio/client";
 import * as activities from "./activities";
 import { loadWorkerConfig } from "./config";
 import { createServer, IncomingMessage, ServerResponse } from "http";
+import { logger } from "./logger";
 
 /** Embedded Perceo Cloud Supabase URL; override with PERCEO_SUPABASE_URL. */
 const DEFAULT_SUPABASE_URL = "https://lygslnolucoidnhaitdn.supabase.co";
@@ -39,10 +40,11 @@ function sendJSON(res: ServerResponse, status: number, data: any) {
 async function run() {
 	const config = loadWorkerConfig();
 
-	console.log("Starting Perceo Temporal Worker...");
-	console.log(`Server: ${config.serverAddress}`);
-	console.log(`Namespace: ${config.namespace}`);
-	console.log(`Task Queue: ${config.taskQueue}`);
+	logger.info("Starting Perceo Temporal Worker", {
+		server: config.serverAddress,
+		namespace: config.namespace,
+		taskQueue: config.taskQueue,
+	});
 
 	// Create connection to Temporal server
 	const connection = await NativeConnection.connect({
@@ -57,7 +59,7 @@ async function run() {
 		namespace: config.namespace,
 	});
 
-	console.log("Temporal client created successfully");
+	logger.info("Temporal client created successfully");
 
 	// Start HTTP server with API endpoints
 	const port = process.env.PORT || "8080";
@@ -81,6 +83,7 @@ async function run() {
 		if (apiKey) {
 			const providedKey = req.headers["x-api-key"] || req.headers["authorization"]?.replace("Bearer ", "");
 			if (providedKey !== apiKey) {
+				logger.warn("API request rejected: invalid or missing API key", { path: req.url });
 				sendJSON(res, 401, { error: "Unauthorized" });
 				return;
 			}
@@ -90,9 +93,14 @@ async function run() {
 			// POST /api/workflows/bootstrap - Start bootstrap workflow
 			if (req.method === "POST" && req.url === "/api/workflows/bootstrap") {
 				const body = await parseBody(req);
-				const { projectId, gitRemoteUrl, projectName, framework, branch = "main", workflowApiKey } = body;
+				const { projectId, gitRemoteUrl, projectName, framework, branch = "main", workflowApiKey, useCustomPersonas } = body;
 
 				if (!projectId || !projectName || !framework) {
+					logger.warn("Bootstrap request rejected: missing required fields", {
+						projectId: !!projectId,
+						projectName: !!projectName,
+						framework: !!framework,
+					});
 					sendJSON(res, 400, {
 						error: "Missing required fields: projectId, projectName, framework",
 					});
@@ -100,6 +108,7 @@ async function run() {
 				}
 
 				if (!gitRemoteUrl) {
+					logger.warn("Bootstrap request rejected: missing gitRemoteUrl", { projectId });
 					sendJSON(res, 400, {
 						error: "Missing required field: gitRemoteUrl (Git repository URL to clone)",
 					});
@@ -107,23 +116,31 @@ async function run() {
 				}
 
 				if (!workflowApiKey) {
+					logger.warn("Bootstrap request rejected: missing workflowApiKey", { projectId });
 					sendJSON(res, 400, {
 						error: "Missing required field: workflowApiKey (project-scoped API key for workflow authorization)",
 					});
 					return;
 				}
 
-				console.log(`Starting bootstrap workflow for project ${projectId} (${projectName})`);
-				console.log(`  Git Remote URL: ${gitRemoteUrl}`);
-				console.log(`  Workflow API Key: ${workflowApiKey.substring(0, 12)}...`);
-
 				const workflowId = `bootstrap-${projectId}-${Date.now()}`;
+				logger.info("Starting bootstrap workflow", {
+					workflowId,
+					projectId,
+					projectName,
+					gitRemoteUrl,
+					framework,
+					branch: body.branch ?? "main",
+					workflowApiKeyPrefix: workflowApiKey.substring(0, 12),
+				});
+
 				const supabaseUrl = process.env.PERCEO_SUPABASE_URL || DEFAULT_SUPABASE_URL;
 				const supabaseServiceRoleKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY;
 				const llmApiKey = process.env.PERCEO_OPEN_ROUTER_API_KEY || process.env.PERCEO_ANTHROPIC_API_KEY;
 				const useOpenRouter = !!process.env.PERCEO_OPEN_ROUTER_API_KEY;
 
 				if (!supabaseUrl || !supabaseServiceRoleKey) {
+					logger.error("Bootstrap failed: missing Supabase credentials", { projectId });
 					sendJSON(res, 500, {
 						error: "Server configuration error: Missing Supabase credentials",
 					});
@@ -131,6 +148,7 @@ async function run() {
 				}
 
 				if (!llmApiKey) {
+					logger.error("Bootstrap failed: missing LLM API key", { projectId });
 					sendJSON(res, 500, {
 						error: "Server configuration error: Missing LLM API key. Set PERCEO_ANTHROPIC_API_KEY or PERCEO_OPEN_ROUTER_API_KEY",
 					});
@@ -148,6 +166,7 @@ async function run() {
 					supabaseServiceRoleKey,
 					llmApiKey,
 					useOpenRouter,
+					useCustomPersonas: !!useCustomPersonas,
 				};
 
 				const handle = await client.workflow.start("bootstrapProjectWorkflow", {
@@ -156,6 +175,10 @@ async function run() {
 					args: [bootstrapInput],
 				});
 
+				logger.info("Bootstrap workflow started", {
+					workflowId: handle.workflowId,
+					projectId,
+				});
 				sendJSON(res, 200, {
 					workflowId: handle.workflowId,
 					message: "Bootstrap workflow started successfully",
@@ -167,6 +190,7 @@ async function run() {
 			if (req.method === "GET" && req.url?.startsWith("/api/workflows/")) {
 				const workflowId = req.url.split("/api/workflows/")[1]?.split("?")[0];
 				if (!workflowId) {
+					logger.warn("Workflow status request: missing workflowId");
 					sendJSON(res, 400, { error: "Missing workflowId" });
 					return;
 				}
@@ -183,11 +207,15 @@ async function run() {
 
 					if (description.status.name === "FAILED") {
 						error = "Workflow failed";
+						logger.info("Workflow status: failed", { workflowId });
 					} else if (description.status.name === "COMPLETED") {
 						result = await handle.result();
+						logger.info("Workflow status: completed", { workflowId, result });
+					} else {
+						logger.debug("Workflow status: in progress", { workflowId, status: description.status.name });
 					}
 				} catch (err) {
-					console.log("Error describing workflow:", err);
+					logger.error("Error describing workflow", { workflowId, error: err instanceof Error ? err.message : String(err) });
 				}
 
 				// Query progress (if not completed)
@@ -196,7 +224,10 @@ async function run() {
 					try {
 						progress = await handle.query("progress");
 					} catch (err) {
-						console.log("Error querying progress:", err);
+						logger.debug("Error querying progress (workflow may not support it)", {
+							workflowId,
+							error: err instanceof Error ? err.message : String(err),
+						});
 					}
 				}
 
@@ -213,7 +244,10 @@ async function run() {
 			// 404 for unknown routes
 			sendJSON(res, 404, { error: "Not found" });
 		} catch (error) {
-			console.error("API error:", error);
+			logger.error("API error", {
+				error: error instanceof Error ? error.message : "Unknown error",
+				stack: error instanceof Error ? error.stack : undefined,
+			});
 			sendJSON(res, 500, {
 				error: error instanceof Error ? error.message : "Unknown error",
 			});
@@ -221,11 +255,10 @@ async function run() {
 	});
 
 	server.listen(parseInt(port, 10), () => {
-		console.log(`HTTP API server listening on port ${port}`);
-		console.log(`API endpoints:`);
-		console.log(`  POST /api/workflows/bootstrap - Start bootstrap workflow`);
-		console.log(`  GET  /api/workflows/:id - Query workflow status`);
-		console.log(`  GET  /health - Health check`);
+		logger.info("HTTP API server listening", {
+			port: parseInt(port, 10),
+			endpoints: ["POST /api/workflows/bootstrap", "GET /api/workflows/:id", "GET /health"],
+		});
 	});
 
 	// Create worker
@@ -237,15 +270,18 @@ async function run() {
 		taskQueue: config.taskQueue,
 	});
 
-	console.log("Worker created successfully. Starting to poll for tasks...");
+	logger.info("Worker created; polling for tasks", { taskQueue: config.taskQueue });
 
 	// Run the worker until it's told to shutdown
 	await worker.run();
 
-	console.log("Worker stopped.");
+	logger.info("Worker stopped");
 }
 
 run().catch((err) => {
-	console.error("Worker failed:", err);
+	logger.error("Worker failed", {
+		error: err instanceof Error ? err.message : String(err),
+		stack: err instanceof Error ? err.stack : undefined,
+	});
 	process.exit(1);
 });

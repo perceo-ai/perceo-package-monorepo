@@ -1,6 +1,7 @@
 import { PerceoDataClient } from "@perceo/supabase";
 import type { PersonaInsert, FlowInsert, StepInsert, UUID } from "@perceo/supabase";
 import { Persona, Flow, Step } from "../utils/claude";
+import { logger } from "../logger";
 
 export interface PersistPersonasInput {
 	projectId: string;
@@ -11,7 +12,15 @@ export interface PersistPersonasInput {
 
 export interface PersistFlowsInput {
 	projectId: string;
-	flows: Array<Flow & { personaId: UUID }>;
+	flows: Array<
+		Flow & {
+			personaId: UUID;
+			/** Route paths for this flow (1-2 pages). Stored in graph_data. */
+			pages?: string[];
+			/** Flow names this flow connects to. Stored in graph_data. */
+			connectedFlowIds?: string[];
+		}
+	>;
 	supabaseUrl: string;
 	supabaseServiceRoleKey: string;
 }
@@ -28,8 +37,9 @@ export interface PersistStepsInput {
  */
 export async function persistPersonasActivity(input: PersistPersonasInput): Promise<UUID[]> {
 	const { projectId, personas, supabaseUrl, supabaseServiceRoleKey } = input;
+	const log = logger.withActivity("persistPersonas");
 
-	console.log(`Persisting ${personas.length} personas for project ${projectId}`);
+	log.info("Persisting personas", { projectId, count: personas.length });
 
 	// Create service role client (bypasses RLS)
 	const client = new PerceoDataClient({
@@ -55,14 +65,22 @@ export async function persistPersonasActivity(input: PersistPersonasInput): Prom
 		try {
 			const created = await client.createPersona(personaInsert);
 			personaIds.push(created.id);
-			console.log(`Created persona: ${persona.name} (${created.id})`);
+			log.info("Created persona", { projectId, personaName: persona.name, personaId: created.id });
 		} catch (error) {
-			console.error(`Failed to create persona ${persona.name}:`, error);
+			log.error("Failed to create persona", {
+				projectId,
+				personaName: persona.name,
+				error: error instanceof Error ? error.message : String(error),
+			});
 			// Continue with other personas
 		}
 	}
 
-	console.log(`Successfully persisted ${personaIds.length}/${personas.length} personas`);
+	log.info("Personas persist complete", {
+		projectId,
+		persisted: personaIds.length,
+		total: personas.length,
+	});
 
 	return personaIds;
 }
@@ -72,8 +90,9 @@ export async function persistPersonasActivity(input: PersistPersonasInput): Prom
  */
 export async function persistFlowsActivity(input: PersistFlowsInput): Promise<UUID[]> {
 	const { projectId, flows, supabaseUrl, supabaseServiceRoleKey } = input;
+	const log = logger.withActivity("persistFlows");
 
-	console.log(`Persisting ${flows.length} flows for project ${projectId}`);
+	log.info("Persisting flows", { projectId, count: flows.length });
 
 	// Create service role client (bypasses RLS)
 	const client = new PerceoDataClient({
@@ -94,7 +113,9 @@ export async function persistFlowsActivity(input: PersistFlowsInput): Promise<UU
 			priority: "medium", // Default priority
 			entry_point: null, // Will be determined later
 			graph_data: {
-				triggerConditions: flow.triggerConditions,
+				triggerConditions: flow.triggerConditions ?? [],
+				...(flow.pages && { pages: flow.pages }),
+				...(flow.connectedFlowIds && { connectedFlowIds: flow.connectedFlowIds }),
 			},
 			coverage_score: null,
 			is_active: true,
@@ -103,14 +124,22 @@ export async function persistFlowsActivity(input: PersistFlowsInput): Promise<UU
 		try {
 			const created = await client.createFlow(flowInsert);
 			flowIds.push(created.id);
-			console.log(`Created flow: ${flow.name} (${created.id})`);
+			log.info("Created flow", { projectId, flowName: flow.name, flowId: created.id });
 		} catch (error) {
-			console.error(`Failed to create flow ${flow.name}:`, error);
+			log.error("Failed to create flow", {
+				projectId,
+				flowName: flow.name,
+				error: error instanceof Error ? error.message : String(error),
+			});
 			// Continue with other flows
 		}
 	}
 
-	console.log(`Successfully persisted ${flowIds.length}/${flows.length} flows`);
+	log.info("Flows persist complete", {
+		projectId,
+		persisted: flowIds.length,
+		total: flows.length,
+	});
 
 	return flowIds;
 }
@@ -120,11 +149,12 @@ export async function persistFlowsActivity(input: PersistFlowsInput): Promise<UU
  */
 export async function persistStepsActivity(input: PersistStepsInput): Promise<number> {
 	const { flowId, steps, supabaseUrl, supabaseServiceRoleKey } = input;
+	const log = logger.withActivity("persistSteps");
 
-	console.log(`Persisting ${steps.length} steps for flow ${flowId}`);
+	log.info("Persisting steps", { flowId, count: steps.length });
 
 	if (steps.length === 0) {
-		console.log("No steps to persist");
+		log.info("No steps to persist", { flowId });
 		return 0;
 	}
 
@@ -157,10 +187,13 @@ export async function persistStepsActivity(input: PersistStepsInput): Promise<nu
 
 	try {
 		const created = await client.createSteps(stepInserts);
-		console.log(`Created ${created.length} steps for flow ${flowId}`);
+		log.info("Steps created", { flowId, count: created.length });
 		return created.length;
 	} catch (error) {
-		console.error(`Failed to create steps for flow ${flowId}:`, error);
+		log.error("Failed to create steps", {
+			flowId,
+			error: error instanceof Error ? error.message : String(error),
+		});
 		return 0;
 	}
 }

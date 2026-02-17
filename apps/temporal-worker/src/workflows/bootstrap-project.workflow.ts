@@ -7,9 +7,9 @@ const {
 	validateWorkflowStartActivity,
 	cloneRepositoryActivity,
 	cleanupRepositoryActivity,
-	getCommitHistoryActivity,
-	extractPersonasFromDiffActivity,
-	extractFlowsFromDiffActivity,
+	discoverRouteGraphActivity,
+	identifyFlowsFromGraphActivity,
+	assignPersonasToFlowsActivity,
 	extractStepsForFlowActivity,
 	persistPersonasActivity,
 	persistFlowsActivity,
@@ -28,16 +28,16 @@ const {
 // Workflow input
 export interface BootstrapProjectInput {
 	projectId: string;
-	gitRemoteUrl: string; // Git remote URL to clone
+	gitRemoteUrl: string;
 	projectName: string;
 	framework: string;
 	branch: string;
-	workflowApiKey: string; // Project-scoped API key for workflow authorization
+	workflowApiKey: string;
 	supabaseUrl: string;
 	supabaseServiceRoleKey: string;
-	llmApiKey: string; // Global LLM API key passed from worker environment
-	useOpenRouter: boolean; // Whether to use OpenRouter (true) or direct Anthropic (false)
-	useCustomPersonas?: boolean; // Whether to use user-configured personas instead of auto-generating
+	llmApiKey: string;
+	useOpenRouter: boolean;
+	useCustomPersonas?: boolean;
 }
 
 // Workflow output
@@ -51,7 +51,7 @@ export interface BootstrapProjectResult {
 
 // Progress tracking
 export interface BootstrapProgress {
-	stage: "init" | "validating" | "git-scan" | "extract-personas" | "extract-flows" | "extract-steps" | "complete" | "error";
+	stage: "init" | "validating" | "clone" | "discover-routes" | "identify-flows" | "assign-personas" | "extract-steps" | "complete" | "error";
 	currentChunk: number;
 	totalChunks: number;
 	personasExtracted: number;
@@ -62,7 +62,6 @@ export interface BootstrapProgress {
 	error?: string;
 }
 
-// Internal state
 let currentProgress: BootstrapProgress = {
 	stage: "init",
 	currentChunk: 0,
@@ -74,482 +73,247 @@ let currentProgress: BootstrapProgress = {
 	percentage: 0,
 };
 
-// Define progress query
 export const progressQuery = defineQuery<BootstrapProgress>("progress");
 
-// Chunk size for commit processing
-const CHUNK_SIZE = 25;
-
 /**
- * Main bootstrap workflow
+ * Main bootstrap workflow (route-first per BOOTSTRAP_SPEC).
  *
  * Phases:
- * 1. Validate API key (security)
- * 2. Get git commit history
- * 3. Extract personas from git history in chunks
- * 4. Extract flows from git history in chunks
- * 5. Extract steps for each flow from current codebase
+ * 1. Validate API key
+ * 2. Clone repository
+ * 3. Discover route graph (no LLM)
+ * 4. Identify flows from graph (1-2 LLM)
+ * 5. Assign personas to flows (1 LLM)
+ * 6. Persist personas (or load if useCustomPersonas)
+ * 7. Persist flows with graph_data (pages, connectedFlowIds)
+ * 8. Extract initial steps per flow (flow-scoped, 1 LLM per flow)
+ * 9. Persist steps, cleanup
  */
 export async function bootstrapProjectWorkflow(input: BootstrapProjectInput): Promise<BootstrapProjectResult> {
 	const { projectId, gitRemoteUrl, framework, branch, workflowApiKey, supabaseUrl, supabaseServiceRoleKey, llmApiKey, useOpenRouter, useCustomPersonas } = input;
 
-	// Set up progress query handler
 	setHandler(progressQuery, () => currentProgress);
 
-	// Track the cloned project directory for cleanup
 	let projectDir: string | null = null;
 
-	console.log("=== Bootstrap Project Workflow Started ===");
+	console.log("=== Bootstrap Project Workflow Started (route-first) ===");
 	console.log(`[WORKFLOW] Project ID: ${projectId}`);
-	console.log(`[WORKFLOW] Project Name: ${input.projectName}`);
 	console.log(`[WORKFLOW] Git Remote: ${gitRemoteUrl}`);
 	console.log(`[WORKFLOW] Framework: ${framework}`);
 	console.log(`[WORKFLOW] Branch: ${branch}`);
-	console.log(`[WORKFLOW] Using OpenRouter: ${useOpenRouter}`);
-	console.log(`[WORKFLOW] Use Custom Personas: ${useCustomPersonas || false}`);
-	console.log(`[WORKFLOW] Supabase URL: ${supabaseUrl}`);
-	console.log(`[WORKFLOW] Workflow API Key: ${workflowApiKey ? workflowApiKey.substring(0, 12) + "..." : "Not provided"}`);
-	console.log(`[WORKFLOW] LLM API Key: ${llmApiKey ? "Configured" : "Not configured"}`);
 
 	try {
-		// ========================================================================
-		// Phase 0: Security - Validate API key
-		// ========================================================================
-		currentProgress = {
-			...currentProgress,
-			stage: "validating",
-			message: "Validating workflow authorization",
-			percentage: 5,
-		};
-
-		console.log(`[WORKFLOW] Validating workflow authorization...`);
+		// Phase 0: Validate
+		currentProgress = { ...currentProgress, stage: "validating", message: "Validating workflow authorization", percentage: 5 };
 		await validateWorkflowStartActivity({
 			apiKey: workflowApiKey,
 			projectId,
 			supabaseUrl,
 			supabaseServiceRoleKey,
 		});
-		console.log(`[WORKFLOW] ✓ Workflow authorization validated`);
-
-		// Validate LLM API key is present (passed from worker environment)
 		if (!llmApiKey) {
-			currentProgress = {
-				...currentProgress,
-				stage: "error",
-				message: "LLM API key not configured",
-				error: "Missing LLM API key in worker configuration",
-			};
-			throw new Error("LLM API key not configured. Please set PERCEO_ANTHROPIC_API_KEY in worker environment.");
+			currentProgress = { ...currentProgress, stage: "error", message: "LLM API key not configured", error: "Missing LLM API key in worker configuration" };
+			throw new Error("LLM API key not configured. Set PERCEO_ANTHROPIC_API_KEY or PERCEO_OPEN_ROUTER_API_KEY in worker environment.");
 		}
 
-		// ========================================================================
-		// Phase 0.5: Clone the repository
-		// ========================================================================
-		currentProgress = {
-			...currentProgress,
-			stage: "git-scan",
-			message: "Cloning repository...",
-			percentage: 8,
-		};
-
-		console.log(`[WORKFLOW] Cloning repository: ${gitRemoteUrl}`);
-		const cloneResult = await cloneRepositoryActivity({
-			gitRemoteUrl,
-			branch,
-		});
+		// Phase 0.5: Clone
+		currentProgress = { ...currentProgress, stage: "clone", message: "Cloning repository...", percentage: 8 };
+		const cloneResult = await cloneRepositoryActivity({ gitRemoteUrl, branch });
 		projectDir = cloneResult.projectDir;
 
-		console.log(`[WORKFLOW] ✓ Repository cloned to: ${projectDir}`);
+		// Phase 1: Discover route graph (no LLM)
+		currentProgress = { ...currentProgress, stage: "discover-routes", message: "Discovering routes and navigation graph", percentage: 12 };
+		const routeGraph = await discoverRouteGraphActivity({ projectDir, framework });
+		if (routeGraph.routes.length === 0) {
+			throw new Error("No routes found in project. Check framework detection and route conventions.");
+		}
+		console.log(`[WORKFLOW] Route graph: ${routeGraph.routes.length} routes, ${routeGraph.navigationGraph.length} edges`);
 
-		// ========================================================================
-		// Phase 1: Git Scan - Get all commit history
-		// ========================================================================
-		currentProgress = {
-			...currentProgress,
-			stage: "git-scan",
-			message: "Scanning git commit history",
-			percentage: 10,
-		};
-
-		console.log(`[WORKFLOW] Getting commit history for branch: ${branch}`);
-		const allCommits = await getCommitHistoryActivity({
-			projectDir,
-			branch,
+		// Phase 2: Identify flows from graph
+		currentProgress = { ...currentProgress, stage: "identify-flows", message: "Identifying flows from route graph", percentage: 20 };
+		const identifiedFlows = await identifyFlowsFromGraphActivity({
+			routeGraph,
+			framework,
+			anthropicApiKey: llmApiKey,
+			useOpenRouter,
 		});
 
-		if (allCommits.length === 0) {
-			console.log(`[WORKFLOW] ✗ No commits found in repository`);
-			throw new Error("No commits found in repository");
+		if (identifiedFlows.length === 0) {
+			throw new Error("No flows identified from route graph.");
 		}
 
-		console.log(`[WORKFLOW] ✓ Found ${allCommits.length} commits in repository`);
-
-		// Split commits into chunks
-		const chunks = chunkArray(allCommits, CHUNK_SIZE);
-		console.log(`[WORKFLOW] Split commits into ${chunks.length} chunks of size ${CHUNK_SIZE}`);
-
-		currentProgress = {
-			...currentProgress,
-			totalChunks: chunks.length,
-			message: `Found ${allCommits.length} commits, processing in ${chunks.length} chunks`,
-			percentage: 15,
-		};
-
-		// ========================================================================
-		// Phase 2: Load or Extract Personas
-		// ========================================================================
-		console.log(`[WORKFLOW] === Phase 2: Load or Extract Personas ===`);
-
-		let allPersonas: any[] = [];
-		let personaIds: string[] = [];
-
+		// Phase 3: Assign personas to flows
+		currentProgress = { ...currentProgress, stage: "assign-personas", message: "Assigning personas to flows", percentage: 35 };
+		let personasWithFlows: Array<{ name: string; description: string; behaviors: string[]; flowNames: string[] }>;
 		if (useCustomPersonas) {
-			// Load user-configured personas from Supabase
-			console.log(`[WORKFLOW] Loading user-configured personas from database`);
-			currentProgress = {
-				...currentProgress,
-				stage: "extract-personas",
-				message: "Loading user-configured personas",
-				percentage: 20,
-			};
-
-			const personasResult = await loadPersonasFromSupabaseActivity({
+			const loaded = await loadPersonasFromSupabaseActivity({
 				projectId,
 				source: "user_configured",
 				supabaseUrl,
 				supabaseServiceRoleKey,
 			});
-
-			allPersonas = personasResult.personas;
-			personaIds = allPersonas.map((p) => p.id);
-
-			console.log(`[WORKFLOW] ✓ Loaded ${allPersonas.length} user-configured personas`);
-
-			currentProgress = {
-				...currentProgress,
-				personasExtracted: allPersonas.length,
-				message: "User-configured personas loaded",
-				percentage: 40,
-			};
-		} else {
-			// Extract personas from git history
-			console.log(`[WORKFLOW] Auto-generating personas from git history`);
-			currentProgress = {
-				...currentProgress,
-				stage: "extract-personas",
-				message: "Extracting user personas from git history",
-				percentage: 20,
-			};
-
-			const personasMap = new Map<string, any>();
-
-			for (let i = 0; i < chunks.length; i++) {
-				const chunk = chunks[i];
-				if (!chunk || chunk.length === 0) continue;
-
-				const baseSha = chunk[0];
-				const headSha = chunk[chunk.length - 1];
-
-				if (!baseSha || !headSha) {
-					console.log(`[WORKFLOW] Skipping chunk ${i + 1} due to missing SHA values`);
-					continue;
-				}
-
-				console.log(`[WORKFLOW] Processing persona chunk ${i + 1}/${chunks.length}: ${baseSha}...${headSha}`);
-				currentProgress = {
-					...currentProgress,
-					currentChunk: i + 1,
-					message: `Extracting personas (chunk ${i + 1}/${chunks.length})`,
-					percentage: 20 + Math.floor((i / chunks.length) * 20),
-				};
-
-				// Extract personas from this chunk
-				const personas = await extractPersonasFromDiffActivity({
-					projectDir,
-					baseSha,
-					headSha,
-					framework,
-					anthropicApiKey: llmApiKey,
-					useOpenRouter,
-				});
-
-				// Merge personas (deduplicate)
-				for (const persona of personas) {
-					const key = persona.name.toLowerCase();
-					if (!personasMap.has(key)) {
-						personasMap.set(key, persona);
-					} else {
-						// Merge behaviors
-						const existing = personasMap.get(key);
-						const behaviorSet = new Set([...existing.behaviors, ...persona.behaviors]);
-						existing.behaviors = Array.from(behaviorSet);
-					}
-				}
-
-				currentProgress = {
-					...currentProgress,
-					personasExtracted: personasMap.size,
-				};
+			personasWithFlows = loaded.personas.map((p: { name: string; description: string | null; behaviors: unknown }) => ({
+				name: p.name,
+				description: p.description ?? "",
+				behaviors: Array.isArray((p.behaviors as { behaviors?: string[] })?.behaviors) ? (p.behaviors as { behaviors: string[] }).behaviors : [],
+				flowNames: [], // Custom personas: we still need flow assignment; run LLM and match by name
+			}));
+			// Run assignment to get flowNames, then match to loaded personas by name
+			const assigned = await assignPersonasToFlowsActivity({
+				identifiedFlows,
+				framework,
+				anthropicApiKey: llmApiKey,
+				useOpenRouter,
+			});
+			for (const a of assigned) {
+				const loadedPersona = personasWithFlows.find((p) => p.name.toLowerCase() === a.name.toLowerCase());
+				if (loadedPersona) loadedPersona.flowNames = a.flowNames;
 			}
+		} else {
+			personasWithFlows = await assignPersonasToFlowsActivity({
+				identifiedFlows,
+				framework,
+				anthropicApiKey: llmApiKey,
+				useOpenRouter,
+			});
+		}
 
-			allPersonas = Array.from(personasMap.values());
-			console.log(`[WORKFLOW] ✓ Persona extraction complete. Total unique personas: ${allPersonas.length}`);
-
-			// Persist personas in batch
-			currentProgress = {
-				...currentProgress,
-				message: "Persisting personas to database",
-				percentage: 40,
-			};
-
-			console.log(`[WORKFLOW] Persisting ${allPersonas.length} personas to database...`);
+		// Persist personas (unless useCustomPersonas — already in DB)
+		const allPersonas = personasWithFlows.map((p) => ({ name: p.name, description: p.description, behaviors: p.behaviors }));
+		let personaIds: UUID[];
+		if (useCustomPersonas) {
+			const loaded = await loadPersonasFromSupabaseActivity({
+				projectId,
+				source: "user_configured",
+				supabaseUrl,
+				supabaseServiceRoleKey,
+			});
+			personaIds = loaded.personas.map((p: { id: string }) => p.id);
+		} else {
+			currentProgress = { ...currentProgress, message: "Persisting personas", percentage: 45 };
 			personaIds = await persistPersonasActivity({
 				projectId,
 				personas: allPersonas,
 				supabaseUrl,
 				supabaseServiceRoleKey,
 			});
-			console.log(`[WORKFLOW] ✓ Personas persisted. IDs: ${personaIds.join(", ")}`);
 		}
 
-		// Create persona name to ID mapping
-		const personaNameToId = new Map<string, UUID>();
-		allPersonas.forEach((persona, index) => {
-			if (personaIds[index]) {
-				personaNameToId.set(persona.name.toLowerCase(), personaIds[index]);
-			}
-		});
-
-		// ========================================================================
-		// Phase 3: Extract Flows (one LLM call per persona per chunk)
-		// ========================================================================
-		console.log(`[WORKFLOW] === Phase 3: Extract Flows ===`);
-		console.log(`[WORKFLOW] Will extract flows for ${allPersonas.length} personas across ${chunks.length} chunks`);
-
-		currentProgress = {
-			...currentProgress,
-			stage: "extract-flows",
-			message: "Extracting user flows from git history",
-			percentage: 45,
-		};
-
-		const flowsMap = new Map<string, any>();
-		const totalFlowExtractions = chunks.length * allPersonas.length;
-		let flowExtractionsCompleted = 0;
-
-		console.log(`[WORKFLOW] Total flow extractions to perform: ${totalFlowExtractions}`);
-
-		for (let i = 0; i < chunks.length; i++) {
-			const chunk = chunks[i];
-			if (!chunk || chunk.length === 0) continue;
-
-			const baseSha = chunk[0];
-			const headSha = chunk[chunk.length - 1];
-
-			if (!baseSha || !headSha) {
-				console.log(`[WORKFLOW] Skipping flow chunk ${i + 1} due to missing SHA values`);
-				continue;
-			}
-
-			console.log(`[WORKFLOW] Processing flow chunk ${i + 1}/${chunks.length}: ${baseSha}...${headSha}`);
-
-			// Extract flows for each persona in this chunk
-			for (const persona of allPersonas) {
-				console.log(`[WORKFLOW] Extracting flows for persona "${persona.name}" in chunk ${i + 1}/${chunks.length}`);
-
-				currentProgress = {
-					...currentProgress,
-					currentChunk: i + 1,
-					message: `Extracting flows for "${persona.name}" (chunk ${i + 1}/${chunks.length})`,
-					percentage: 45 + Math.floor((flowExtractionsCompleted / totalFlowExtractions) * 25),
-				};
-
-				// Extract flows for this persona from this chunk
-				const flows = await extractFlowsFromDiffActivity({
-					projectDir,
-					baseSha,
-					headSha,
-					framework,
-					persona,
-					anthropicApiKey: llmApiKey,
-					useOpenRouter,
+		// Build flow records: each (persona, flowName) -> one flow with that personaId and identifiedFlow data
+		const flowRecords: Array<{
+			name: string;
+			description: string;
+			personaId: UUID;
+			personaName: string;
+			triggerConditions: string[];
+			pages: string[];
+			connectedFlowIds: string[];
+		}> = [];
+		const nameToIdentifiedFlow = new Map(identifiedFlows.map((f) => [f.name, f]));
+		for (let i = 0; i < personasWithFlows.length; i++) {
+			const persona = personasWithFlows[i];
+			const personaId = personaIds[i];
+			if (!persona || !personaId) continue;
+			for (const flowName of persona.flowNames) {
+				const identified = nameToIdentifiedFlow.get(flowName);
+				if (!identified) continue;
+				flowRecords.push({
+					name: identified.name,
+					description: identified.description,
+					personaId,
+					personaName: persona.name,
+					triggerConditions: [],
+					pages: identified.pages,
+					connectedFlowIds: identified.connectedFlowIds ?? [],
 				});
-
-				// Merge flows (deduplicate by name + persona)
-				for (const flow of flows) {
-					const key = `${flow.personaName.toLowerCase()}:${flow.name.toLowerCase()}`;
-					if (!flowsMap.has(key)) {
-						// Add persona ID
-						const personaId = personaNameToId.get(flow.personaName.toLowerCase());
-						flowsMap.set(key, { ...flow, personaId });
-					} else {
-						// Merge trigger conditions
-						const existing = flowsMap.get(key);
-						const triggerSet = new Set([...existing.triggerConditions, ...flow.triggerConditions]);
-						existing.triggerConditions = Array.from(triggerSet);
-					}
-				}
-
-				flowExtractionsCompleted++;
-				currentProgress = {
-					...currentProgress,
-					flowsExtracted: flowsMap.size,
-				};
 			}
 		}
 
-		const allFlows = Array.from(flowsMap.values());
-		console.log(`[WORKFLOW] ✓ Flow extraction complete. Total unique flows: ${allFlows.length}`);
-
-		// Persist flows in batch
-		currentProgress = {
-			...currentProgress,
-			message: "Persisting flows to database",
-			percentage: 70,
-		};
-
-		console.log(`[WORKFLOW] Persisting ${allFlows.length} flows to database...`);
+		currentProgress = { ...currentProgress, message: "Persisting flows", percentage: 55 };
 		const flowIds = await persistFlowsActivity({
 			projectId,
-			flows: allFlows,
+			flows: flowRecords.map((f) => ({
+				name: f.name,
+				personaName: f.personaName,
+				description: f.description,
+				triggerConditions: f.triggerConditions,
+				personaId: f.personaId,
+				pages: f.pages,
+				connectedFlowIds: f.connectedFlowIds,
+			})),
 			supabaseUrl,
 			supabaseServiceRoleKey,
 		});
-		console.log(`[WORKFLOW] ✓ Flows persisted. IDs: ${flowIds.slice(0, 5).join(", ")}${flowIds.length > 5 ? "..." : ""}`);
+		const flowsWithMeta = flowRecords.map((r, idx) => ({ ...r, flowId: flowIds[idx], identified: nameToIdentifiedFlow.get(r.name)! }));
 
-		// ========================================================================
-		// Phase 4: Extract Steps for Each Flow
-		// ========================================================================
-		console.log(`[WORKFLOW] === Phase 4: Extract Steps ===`);
-		console.log(`[WORKFLOW] Will extract steps for ${allFlows.length} flows`);
-
-		currentProgress = {
-			...currentProgress,
-			stage: "extract-steps",
-			message: "Extracting detailed steps for flows",
-			percentage: 75,
-		};
-
+		// Phase 4: Extract initial steps per flow (flow-scoped)
+		currentProgress = { ...currentProgress, stage: "extract-steps", message: "Extracting initial steps for flows", percentage: 60 };
 		let totalSteps = 0;
+		const pathByRoute = new Map(routeGraph.routes.map((r) => [r.path, r.filePath]));
 
-		for (let i = 0; i < allFlows.length; i++) {
-			const flow = allFlows[i];
-			const flowId = flowIds[i];
-
-			if (!flowId) {
-				console.log(`[WORKFLOW] Skipping flow ${flow.name} due to missing flow ID`);
-				continue;
-			}
-
-			console.log(`[WORKFLOW] Extracting steps for flow: ${flow.name} (${i + 1}/${allFlows.length})`);
+		for (let i = 0; i < flowsWithMeta.length; i++) {
+			const row = flowsWithMeta[i];
+			if (!row) continue;
+			const { flowId, name, description, identified } = row;
+			if (!flowId) continue;
+			const flowPageFilePaths = (identified.pages ?? []).map((p: string) => pathByRoute.get(p)).filter(Boolean) as string[];
 			currentProgress = {
 				...currentProgress,
-				message: `Extracting steps for flow: ${flow.name} (${i + 1}/${allFlows.length})`,
-				percentage: 75 + Math.floor((i / allFlows.length) * 20),
+				message: `Extracting steps for ${name} (${i + 1}/${flowsWithMeta.length})`,
+				percentage: 60 + Math.floor((i / flowsWithMeta.length) * 35),
 			};
-
-			// Extract steps for this flow
 			const steps = await extractStepsForFlowActivity({
-				projectDir,
+				projectDir: projectDir!,
 				flowId,
-				flowName: flow.name,
-				flowDescription: flow.description,
+				flowName: name,
+				flowDescription: description,
 				framework,
 				branch,
 				anthropicApiKey: llmApiKey,
 				useOpenRouter,
+				flowPageFilePaths: flowPageFilePaths.length > 0 ? flowPageFilePaths : undefined,
 			});
-
-			// Persist steps
-			console.log(`[WORKFLOW] Persisting ${steps.length} steps for flow: ${flow.name}`);
 			const stepsCreated = await persistStepsActivity({
 				flowId,
 				steps,
 				supabaseUrl,
 				supabaseServiceRoleKey,
 			});
-
-			console.log(`[WORKFLOW] ✓ Persisted ${stepsCreated} steps for flow: ${flow.name}`);
 			totalSteps += stepsCreated;
-
-			currentProgress = {
-				...currentProgress,
-				stepsExtracted: totalSteps,
-			};
+			currentProgress = { ...currentProgress, stepsExtracted: totalSteps };
 		}
 
-		// ========================================================================
-		// Complete
-		// ========================================================================
-		console.log(`[WORKFLOW] === Bootstrap Complete ===`);
-		console.log(`[WORKFLOW] Summary:`);
-		console.log(`[WORKFLOW]   - Personas extracted: ${personaIds.length}`);
-		console.log(`[WORKFLOW]   - Flows extracted: ${flowIds.length}`);
-		console.log(`[WORKFLOW]   - Steps extracted: ${totalSteps}`);
-		console.log(`[WORKFLOW]   - Commits processed: ${allCommits.length}`);
+		currentProgress = { ...currentProgress, stage: "complete", message: "Bootstrap complete!", percentage: 100 };
 
-		currentProgress = {
-			...currentProgress,
-			stage: "complete",
-			message: "Bootstrap complete!",
-			percentage: 100,
-		};
-
-		// Cleanup: Remove cloned repository
 		if (projectDir) {
 			try {
-				console.log(`[WORKFLOW] Cleaning up cloned repository: ${projectDir}`);
 				await cleanupRepositoryActivity({ projectDir });
-				console.log(`[WORKFLOW] ✓ Repository cleanup completed`);
-			} catch (cleanupError) {
-				console.error(`[WORKFLOW] ✗ Failed to cleanup repository, but workflow succeeded:`, cleanupError);
+			} catch (e) {
+				console.error("[WORKFLOW] Cleanup failed:", e);
 			}
 		}
 
-		const result = {
+		return {
 			projectId,
 			personasExtracted: personaIds.length,
 			flowsExtracted: flowIds.length,
 			stepsExtracted: totalSteps,
-			totalCommitsProcessed: allCommits.length,
+			totalCommitsProcessed: 0,
 		};
-
-		console.log(`[WORKFLOW] Returning result:`, result);
-		return result;
 	} catch (error) {
-		console.error(`[WORKFLOW] ✗ Bootstrap workflow failed:`, error);
-
-		// Cleanup: Remove cloned repository even on error
-		if (projectDir) {
-			try {
-				console.log(`[WORKFLOW] Cleaning up cloned repository after error: ${projectDir}`);
-				await cleanupRepositoryActivity({ projectDir });
-				console.log(`[WORKFLOW] ✓ Repository cleanup completed after error`);
-			} catch (cleanupError) {
-				console.error(`[WORKFLOW] ✗ Failed to cleanup repository after error:`, cleanupError);
-			}
-		}
-
-		const errorMessage = error instanceof Error ? error.message : "Unknown error";
-		console.error(`[WORKFLOW] Final error message: ${errorMessage}`);
-
 		currentProgress = {
 			...currentProgress,
 			stage: "error",
-			message: errorMessage,
-			error: errorMessage,
+			message: error instanceof Error ? error.message : "Unknown error",
+			error: error instanceof Error ? error.message : String(error),
 		};
+		if (projectDir) {
+			try {
+				await cleanupRepositoryActivity({ projectDir });
+			} catch (e) {
+				console.error("[WORKFLOW] Cleanup after error failed:", e);
+			}
+		}
 		throw error;
 	}
-}
-
-/**
- * Split array into chunks
- */
-function chunkArray<T>(array: T[], chunkSize: number): T[][] {
-	const chunks: T[][] = [];
-	for (let i = 0; i < array.length; i += chunkSize) {
-		chunks.push(array.slice(i, i + chunkSize));
-	}
-	return chunks;
 }

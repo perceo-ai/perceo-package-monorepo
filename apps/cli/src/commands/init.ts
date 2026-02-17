@@ -6,7 +6,7 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { isLoggedIn, getEffectiveAuth } from "../auth.js";
 import { checkProjectAccess } from "../projectAccess.js";
-import { PerceoDataClient, type ApiKeyScope, getSupabaseUrl, getSupabaseAnonKey } from "@perceo/supabase";
+import { PerceoDataClient, type ApiKeyScope, getSupabaseUrl, getSupabaseAnonKey, type Flow, type Persona } from "@perceo/supabase";
 import { detectGitHubRemote, isGitRepository, authorizeGitHub, createRepositorySecret, checkRepositoryPermissions } from "../github.js";
 import { createInterface } from "node:readline";
 import os from "node:os";
@@ -734,6 +734,9 @@ export const initCommand = new Command("init")
 			console.log(chalk.bold("Project ID: ") + projectId);
 			console.log(chalk.bold("Flows discovered: ") + `${flowsDiscovered} (${flowsNew} new)`);
 
+			// Show ASCII graph of personas → flows → pages (from bootstrap)
+			await renderBootstrapGraph(client, projectId);
+
 			// GitHub Actions setup output
 			if (githubAutoConfigured && workflowCreated) {
 				console.log("\n" + chalk.bold.green("✓ GitHub Actions configured automatically!"));
@@ -841,6 +844,84 @@ interface BootstrapProgress {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/**
+ * Fetch flows and personas for the project and render a simple ASCII graph
+ * (personas → flows → pages) so the user can see the graph created by init.
+ */
+async function renderBootstrapGraph(client: InstanceType<typeof PerceoDataClient>, projectId: string): Promise<void> {
+	try {
+		const [flows, personas] = await Promise.all([client.getFlows(projectId), client.getPersonas(projectId)]);
+		if (flows.length === 0) {
+			console.log(chalk.gray("\n  No flows to display in graph.\n"));
+			return;
+		}
+
+		const personaById = new Map<string, Persona>();
+		for (const p of personas) {
+			personaById.set(p.id, p);
+		}
+
+		// Group flows by persona (include flows with no persona)
+		const byPersona = new Map<string, Flow[]>();
+		const noPersona: Flow[] = [];
+		for (const f of flows) {
+			if (f.persona_id) {
+				const list = byPersona.get(f.persona_id) ?? [];
+				list.push(f);
+				byPersona.set(f.persona_id, list);
+			} else {
+				noPersona.push(f);
+			}
+		}
+
+		// Order: personas by name, then "Flows (no persona)" if any
+		const personaIds = [...byPersona.keys()].sort((a, b) => {
+			const na = personaById.get(a)?.name ?? "";
+			const nb = personaById.get(b)?.name ?? "";
+			return na.localeCompare(nb);
+		});
+
+		const width = 52;
+		console.log("\n" + chalk.bold("  Graph (personas → flows → pages)"));
+		console.log(chalk.cyan("  " + "═".repeat(width)));
+
+		for (const pid of personaIds) {
+			const persona = personaById.get(pid);
+			const name = persona?.name ?? "Unknown";
+			const list = byPersona.get(pid) ?? [];
+			console.log(chalk.gray("  ") + chalk.bold(persona ? chalk.magenta("▸ " + name) : "▸ " + name));
+
+			for (let i = 0; i < list.length; i++) {
+				const flow = list[i];
+				const isLastFlow = i === list.length - 1;
+				const flowBranch = isLastFlow ? "└" : "├";
+				const flowPrefix = "  │  ";
+				const pages = (flow?.graph_data?.pages as string[] | undefined) ?? [];
+				const pageStr = pages.length > 0 ? pages.join(" → ") : "(no pages)";
+				console.log(chalk.gray(flowPrefix + flowBranch + "─ ") + chalk.cyan(flow?.name ?? "Unknown"));
+				console.log(chalk.gray(flowPrefix + "   ") + chalk.gray(pageStr));
+			}
+		}
+
+		if (noPersona.length > 0) {
+			console.log(chalk.gray("  ") + chalk.bold(chalk.dim("▸ (no persona)")));
+			for (let i = 0; i < noPersona.length; i++) {
+				const flow = noPersona[i];
+				const isLastFlow = i === noPersona.length - 1;
+				const flowBranch = isLastFlow ? "└" : "├";
+				const pages = (flow?.graph_data?.pages as string[] | undefined) ?? [];
+				const pageStr = pages.length > 0 ? pages.join(" → ") : "(no pages)";
+				console.log(chalk.gray("  │  " + flowBranch + "─ ") + chalk.cyan(flow?.name ?? "Unknown"));
+				console.log(chalk.gray("  │     ") + chalk.gray(pageStr));
+			}
+		}
+
+		console.log(chalk.cyan("  " + "═".repeat(width)) + "\n");
+	} catch (err) {
+		console.log(chalk.gray("\n  Could not load graph for display: " + (err instanceof Error ? err.message : String(err)) + "\n"));
+	}
+}
 
 async function readPackageJson(projectDir: string): Promise<PackageJson | null> {
 	const pkgPath = path.join(projectDir, "package.json");

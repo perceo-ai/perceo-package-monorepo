@@ -1,5 +1,17 @@
 # @perceo/supabase
 
+## 0.3.1
+
+### Patch Changes
+
+- Updating logginf or the temporal and cli output off init
+
+## 0.3.0
+
+### Minor Changes
+
+- Completely revamped the observer engine's init/bootstrap workflow to better suit how I want flows to be generated/how I want them to look
+
 ## 0.2.4
 
 ### Patch Changes

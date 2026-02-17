@@ -1,6 +1,54 @@
-# Turborepo starter
+# Perceo
 
-This Turborepo starter is maintained by the Turborepo core team.
+Perceo is an intelligent regression testing tool that uses multi-agent simulation to automatically detect affected flows and run targeted tests. The project is a Turborepo monorepo with pnpm workspaces.
+
+## Perceo Conceptual Model
+
+Perceo organizes testing around three core concepts with clear boundaries:
+
+- **Personas** - Own flows. Personas are user types (e.g., admin, guest) and each persona uses a subset of flows.
+- **Flows** - One specific action isolated to one page or at most a couple of pages. Each flow object represents a single user action (e.g., "Submit login form", "Add item to cart"). Flows form a connected graph; they connect when they share pages or when one flow leads to another (e.g., "Submit login" ends at `/dashboard`, "View dashboard" starts there).
+- **Steps** - Testing artifacts. Steps are discrete assertions or checks to perform when validating a flow. They are not necessarily connected; they are things to verify during testing. Steps are generated initially at init and then incrementally as the app is tested.
+
+```mermaid
+graph TD
+    subgraph personas [Personas]
+        P1[Admin]
+        P2[Guest]
+    end
+
+    subgraph flows [Flows - One action per flow, 1-2 pages]
+        F1[Submit login]
+        F2[View dashboard]
+        F3[Add to cart]
+        F1 --> F2
+        F2 --> F3
+    end
+
+    subgraph steps [Steps - Testing Assertions]
+        S1[Verify login button]
+        S2[Check redirect]
+        S3[Verify dashboard load]
+    end
+
+    P1 --> F1
+    P1 --> F2
+    P1 --> F3
+    P2 --> F1
+    P2 --> F2
+
+    F1 -.->|"has steps to check"| S1
+    F1 -.->|"has steps to check"| S2
+    F2 -.->|"has steps to check"| S3
+```
+
+See [docs/BOOTSTRAP_SPEC.md](docs/BOOTSTRAP_SPEC.md) for the init/bootstrap implementation spec.
+
+---
+
+## Turborepo Monorepo
+
+This monorepo is built with Turborepo and maintained by the Turborepo core team.
 
 ## Using this example
 

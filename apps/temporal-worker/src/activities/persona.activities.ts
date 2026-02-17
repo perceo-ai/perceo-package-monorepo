@@ -1,4 +1,5 @@
 import { PerceoDataClient } from "@perceo/supabase";
+import { logger } from "../logger";
 
 export interface LoadPersonasFromSupabaseInput {
 	projectId: string;
@@ -17,33 +18,27 @@ export interface LoadPersonasFromSupabaseResult {
  */
 export async function loadPersonasFromSupabaseActivity(input: LoadPersonasFromSupabaseInput): Promise<LoadPersonasFromSupabaseResult> {
 	const { projectId, source, supabaseUrl, supabaseServiceRoleKey } = input;
+	const log = logger.withActivity("loadPersonasFromSupabase");
 
-	console.log(`[PERSONA] Loading ${source} personas for project ${projectId}`);
-	console.log(`[PERSONA] Supabase URL: ${supabaseUrl}`);
+	log.info("Loading personas from Supabase", { projectId, source, supabaseUrl });
 
-	try {
-		// Create Supabase client with service role key
-		const client = new PerceoDataClient({
-			supabaseUrl,
-			supabaseKey: supabaseServiceRoleKey,
-			projectId,
-		});
+	const client = new PerceoDataClient({
+		supabaseUrl,
+		supabaseKey: supabaseServiceRoleKey,
+		projectId,
+	});
 
-		// Load personas by source
-		const personas = await client.getPersonasBySource(source, projectId);
+	const personas = await client.getPersonasBySource(source, projectId);
 
-		console.log(`[PERSONA] ✓ Loaded ${personas.length} ${source} personas`);
+	log.info("Personas loaded", {
+		projectId,
+		source,
+		count: personas.length,
+		personaNames: personas.map((p) => p.name),
+	});
 
-		if (personas.length > 0) {
-			console.log(`[PERSONA] Persona names: ${personas.map((p) => p.name).join(", ")}`);
-		}
-
-		return {
-			personas,
-			count: personas.length,
-		};
-	} catch (error) {
-		console.error(`[PERSONA] ✗ Failed to load ${source} personas:`, error);
-		throw new Error(`Failed to load ${source} personas from Supabase: ${error instanceof Error ? error.message : String(error)}`);
-	}
+	return {
+		personas,
+		count: personas.length,
+	};
 }

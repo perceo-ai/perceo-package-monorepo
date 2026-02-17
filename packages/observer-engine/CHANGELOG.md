@@ -1,5 +1,26 @@
 # @perceo/observer-engine
 
+## 3.0.1
+
+### Patch Changes
+
+- Updating logginf or the temporal and cli output off init
+- Updated dependencies
+  - @perceo/supabase@0.3.1
+  - @perceo/perceo@0.4.1
+
+## 3.0.0
+
+### Minor Changes
+
+- Completely revamped the observer engine's init/bootstrap workflow to better suit how I want flows to be generated/how I want them to look
+
+### Patch Changes
+
+- Updated dependencies
+  - @perceo/supabase@0.3.0
+  - @perceo/perceo@0.4.0
+
 ## 2.0.5
 
 ### Patch Changes

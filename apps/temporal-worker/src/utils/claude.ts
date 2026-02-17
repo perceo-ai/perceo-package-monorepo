@@ -16,6 +16,22 @@ export interface Flow {
 	triggerConditions: string[];
 }
 
+/** Flow identified from route graph (Phase 2): one action, 1-2 pages */
+export interface IdentifiedFlow {
+	name: string;
+	description: string;
+	pages: string[];
+	connectedFlowIds?: string[];
+}
+
+/** Persona with flow assignments (Phase 3) */
+export interface PersonaWithFlowNames {
+	name: string;
+	description: string;
+	behaviors: string[];
+	flowNames: string[];
+}
+
 export interface Step {
 	stepNumber: number;
 	action: string;
@@ -78,7 +94,7 @@ export class ClaudeClient {
 		const promptsDir = join(__dirname, "../prompts");
 		console.log(`Loading prompts from: ${promptsDir}`);
 
-		const promptTypes = ["personas", "flows", "steps"];
+		const promptTypes = ["personas", "flows", "steps", "flows-from-graph", "personas-assign"];
 
 		for (const type of promptTypes) {
 			try {
@@ -417,5 +433,84 @@ export class ClaudeClient {
 			console.error("LLM API error (steps):", error);
 			return [];
 		}
+	}
+
+	/**
+	 * Phase 2: Identify flows from route graph (1-2 LLM calls).
+	 * Each flow is one action, 1-2 pages, with optional connectivity.
+	 */
+	async identifyFlowsFromRouteGraph(routeList: string, navigationGraph: string, framework: string, authSnippets?: string): Promise<IdentifiedFlow[]> {
+		const config = this.prompts.get("flows-from-graph");
+		if (!config) {
+			throw new Error("flows-from-graph prompt config not loaded");
+		}
+
+		const prompt =
+			this.renderTemplate(config.template, {
+				framework,
+				routeList,
+				navigationGraph,
+				authSnippets: authSnippets ?? "None",
+			}) + this.buildSchemaInstructions(config);
+
+		const raw = await this.sendPromptAndParse<{ flows: IdentifiedFlow[] }>(prompt);
+		return raw?.flows ?? [];
+	}
+
+	/**
+	 * Phase 3: Assign personas to flows (1 LLM call).
+	 */
+	async assignPersonasToFlows(flowList: string, framework: string, authSnippets?: string): Promise<PersonaWithFlowNames[]> {
+		const config = this.prompts.get("personas-assign");
+		if (!config) {
+			throw new Error("personas-assign prompt config not loaded");
+		}
+
+		const prompt =
+			this.renderTemplate(config.template, {
+				framework,
+				flowList,
+				authSnippets: authSnippets ?? "None",
+			}) + this.buildSchemaInstructions(config);
+
+		const raw = await this.sendPromptAndParse<{ personas: PersonaWithFlowNames[] }>(prompt);
+		return raw?.personas ?? [];
+	}
+
+	private async sendPromptAndParse<T>(prompt: string): Promise<T | null> {
+		try {
+			if (this.useOpenRouter && this.openRouterClient) {
+				const completion = await this.openRouterClient.chat.send({
+					model: this.getModelId(),
+					messages: [{ role: "user", content: prompt }],
+				});
+				const content = completion.choices[0]?.message?.content;
+				const contentText = this.extractContentText(content);
+				return contentText ? this.parseJsonResponse<T>(contentText) : null;
+			}
+			if (this.anthropicClient) {
+				const response = await this.anthropicClient.messages.create({
+					model: this.getModelId(),
+					max_tokens: 8192,
+					messages: [{ role: "user", content: prompt }],
+				});
+				const content = response.content?.[0];
+				const text = content && content.type === "text" ? content.text : "";
+				return text ? this.parseJsonResponse<T>(text) : null;
+			}
+			return null;
+		} catch (error) {
+			console.error("LLM API error:", error);
+			return null;
+		}
+	}
+
+	private extractContentText(content: unknown): string | undefined {
+		if (typeof content === "string") return content;
+		if (Array.isArray(content)) {
+			const texts = content.filter((c) => typeof c === "object" && c !== null && "type" in c && (c as { type: string }).type === "text" && "text" in c).map((c) => (c as { text: string }).text);
+			return texts.length ? texts.join("\n") : undefined;
+		}
+		return undefined;
 	}
 }

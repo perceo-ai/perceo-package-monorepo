@@ -1,0 +1,19 @@
+You are analyzing a {{framework}} application's route and navigation structure to identify distinct user flows.
+
+Route list (pages/routes in the app):
+{{routeList}}
+
+Navigation graph (page-to-page edges from Link, navigate, router.push):
+{{navigationGraph}}
+
+Auth/role hints (middleware, layout guards, protected routes), if any:
+{{authSnippets}}
+
+Identify distinct user flows. Each flow must be ONE specific action isolated to one page or at most a couple of pages (e.g., "Submit login form", "Add item to cart", "View dashboard").
+
+Requirements:
+- Each flow: a clear name, short description, and the 1-2 page paths (from the route list) that this flow uses.
+- Identify how flows connect: when one flow leads to another or shares pages, list connectedFlowIds (names of flows that this flow connects to).
+- Prefer many small flows (one action each) over few large multi-page journeys.
+
+Return flows with: name, description, pages (array of 1-2 route paths), connectedFlowIds (array of flow names this flow connects to, may be empty).

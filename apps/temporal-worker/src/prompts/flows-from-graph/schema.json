@@ -1,0 +1,33 @@
+{
+	"name": "flows_from_graph",
+	"strict": true,
+	"schema": {
+		"type": "object",
+		"properties": {
+			"flows": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"name": { "type": "string", "description": "Flow name, one action (e.g. 'Submit login form')" },
+						"description": { "type": "string", "description": "What this flow accomplishes" },
+						"pages": {
+							"type": "array",
+							"items": { "type": "string" },
+							"description": "1-2 route paths from the route list (e.g. ['/login', '/dashboard'])"
+						},
+						"connectedFlowIds": {
+							"type": "array",
+							"items": { "type": "string" },
+							"description": "Names of flows this flow connects to"
+						}
+					},
+					"required": ["name", "description", "pages"],
+					"additionalProperties": false
+				}
+			}
+		},
+		"required": ["flows"],
+		"additionalProperties": false
+	}
+}

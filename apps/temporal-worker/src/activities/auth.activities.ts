@@ -1,4 +1,5 @@
 import { PerceoDataClient } from "@perceo/supabase";
+import { logger } from "../logger";
 
 export interface ValidateWorkflowStartInput {
 	apiKey: string;
@@ -19,10 +20,13 @@ export interface ValidateWorkflowStartInput {
  */
 export async function validateWorkflowStartActivity(input: ValidateWorkflowStartInput): Promise<void> {
 	const { apiKey, projectId, supabaseUrl, supabaseServiceRoleKey } = input;
+	const log = logger.withActivity("validateWorkflowStart", undefined);
 
-	console.log(`Validating workflow authorization for project ${projectId}`);
-	console.log(`  API Key prefix: ${apiKey.substring(0, 12)}...`);
-	console.log(`  Supabase URL: ${supabaseUrl}`);
+	log.info("Validating workflow authorization", {
+		projectId,
+		apiKeyPrefix: apiKey.substring(0, 12),
+		supabaseUrl,
+	});
 
 	// Create service role client (bypasses RLS)
 	const client = new PerceoDataClient({
@@ -30,42 +34,39 @@ export async function validateWorkflowStartActivity(input: ValidateWorkflowStart
 		supabaseKey: supabaseServiceRoleKey,
 	});
 
-	// Validate API key
-	console.log(`  Looking up API key in project_api_keys table...`);
 	const result = await client.validateApiKey(apiKey);
 
 	if (!result) {
-		console.error(`  ✗ API key not found in database`);
-		console.error(`  Expected format: prc_<base64url_string>`);
-		console.error(`  Provided key starts with: ${apiKey.substring(0, 12)}`);
+		log.error("API key not found in database", {
+			projectId,
+			apiKeyPrefix: apiKey.substring(0, 12),
+		});
 		throw new Error("Invalid API key");
 	}
 
-	console.log(`  ✓ API key found in database`);
-	console.log(`  Key belongs to project: ${result.projectId}`);
-	console.log(`  Key scopes: ${result.scopes.join(", ")}`);
+	log.info("API key found; checking project and scopes", {
+		projectId,
+		keyProjectId: result.projectId,
+		scopes: result.scopes,
+	});
 
-	// Check project match
 	if (result.projectId !== projectId) {
-		console.error(`  ✗ Project ID mismatch`);
-		console.error(`  Expected: ${projectId}`);
-		console.error(`  Key belongs to: ${result.projectId}`);
+		log.error("Project ID mismatch", {
+			expected: projectId,
+			keyBelongsTo: result.projectId,
+		});
 		throw new Error(`API key does not belong to project ${projectId} (belongs to ${result.projectId})`);
 	}
 
-	console.log(`  ✓ Project ID matches`);
-
-	// Check for workflows:start scope
 	if (!result.scopes.includes("workflows:start")) {
-		console.error(`  ✗ Missing required scope: workflows:start`);
-		console.error(`  Key has scopes: ${result.scopes.join(", ")}`);
+		log.error("Missing workflows:start scope", {
+			projectId,
+			scopes: result.scopes,
+		});
 		throw new Error("API key does not have workflows:start scope. Required scopes: workflows:start");
 	}
 
-	console.log(`  ✓ workflows:start scope present`);
-
-	// Validation successful
-	console.log(`✓ Workflow start authorized for project ${projectId}`);
+	log.info("Workflow start authorized", { projectId });
 }
 
 export interface GetProjectSecretInput {
@@ -97,10 +98,17 @@ export async function getProjectSecretActivity(input: GetProjectSecretInput): Pr
 	});
 
 	if (error) {
+		logger.error("Failed to fetch project secret", {
+			activity: "getProjectSecret",
+			projectId,
+			keyName,
+			error: error.message,
+		});
 		throw new Error(`Failed to fetch project secret '${keyName}': ${error.message}`);
 	}
 
 	if (!data) {
+		logger.warn("Project secret not found", { projectId, keyName });
 		throw new Error(`Project secret '${keyName}' not found for project ${projectId}`);
 	}
 

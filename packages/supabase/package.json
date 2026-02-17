@@ -1,6 +1,6 @@
 {
 	"name": "@perceo/supabase",
-	"version": "0.2.4",
+	"version": "0.3.1",
 	"description": "Shared Supabase client for Perceo (auth, data, and more)",
 	"keywords": [
 		"perceo",
