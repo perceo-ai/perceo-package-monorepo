@@ -7,3 +7,4 @@ export * from "./git.activities";
 export * from "./extraction.activities";
 export * from "./persistence.activities";
 export * from "./persona.activities";
+export * from "./computer-use.activities";

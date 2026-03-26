@@ -31,6 +31,7 @@ export type SyncStatus = "success" | "failed" | "partial";
 export type ApiKeyScope =
 	| "ci:analyze" // Run perceo ci analyze
 	| "ci:test" // Run perceo ci test
+	| "computer-use:run" // Start desktop / computer-use test workflows
 	| "flows:read" // Read flows
 	| "flows:write" // Create/update flows
 	| "insights:read" // Read insights
@@ -84,6 +85,46 @@ export interface Flow {
 	is_active: boolean;
 	created_at: Timestamp;
 	updated_at: Timestamp;
+}
+
+export type ComputerUseVmType = "windows" | "linux" | "macos";
+export type ComputerUseAppSourceType = "installed" | "repo";
+export type ComputerUseCacheStrategy = "none" | "deps-only" | "full";
+
+/** 1:1 desktop execution config (see flow_computer_use migration). */
+export interface FlowComputerUse {
+	flow_id: UUID;
+	goal: string;
+	success_criteria: string;
+	timeout_seconds: number;
+	vm_type: ComputerUseVmType;
+	vm_snapshot_name: string;
+	app_source_type: ComputerUseAppSourceType;
+	app_setup_script_path: string | null;
+	repo_url: string | null;
+	repo_branch: string | null;
+	build_command: string | null;
+	start_command: string | null;
+	ready_wait_spec: string;
+	env_secret_names: string[];
+	runtime_snapshot_name: string | null;
+	cache_strategy: ComputerUseCacheStrategy;
+	created_at: Timestamp;
+	updated_at: Timestamp;
+}
+
+export interface TelemetryEvent {
+	id: UUID;
+	test_run_id: UUID;
+	flow_id: UUID | null;
+	vm_id: string;
+	step_index: number;
+	action_type: string;
+	success: boolean | null;
+	screenshot_url: string | null;
+	coordinator_event: string | null;
+	payload: Record<string, unknown>;
+	created_at: Timestamp;
 }
 
 export interface StepAction {
@@ -333,6 +374,14 @@ export type FlowInsert = Omit<Flow, "id" | "created_at" | "updated_at" | "affect
 	is_active?: boolean;
 };
 
+export type FlowComputerUseInsert = Omit<FlowComputerUse, "created_at" | "updated_at">;
+
+export type FlowComputerUseUpdate = Partial<Omit<FlowComputerUse, "flow_id" | "created_at">>;
+
+export type TelemetryEventInsert = Omit<TelemetryEvent, "id" | "created_at"> & {
+	id?: UUID;
+};
+
 export type StepInsert = Omit<Step, "id" | "created_at" | "updated_at"> & {
 	id?: UUID;
 	actions?: StepAction[];
@@ -341,11 +390,11 @@ export type StepInsert = Omit<Step, "id" | "created_at" | "updated_at"> & {
 	retry_count?: number;
 };
 
-export type TestRunInsert = Omit<TestRun, "id" | "created_at"> & {
-	id?: UUID;
-	screenshots?: string[];
-	logs?: unknown[];
-};
+/** Inserts only need project + status; other columns default to null / DB defaults. */
+export type TestRunInsert = Partial<Omit<TestRun, "id" | "created_at">> &
+	Pick<TestRun, "project_id" | "status"> & {
+		id?: UUID;
+	};
 
 export type InsightInsert = Omit<Insight, "id" | "created_at" | "acknowledged_at" | "resolved_at"> & {
 	id?: UUID;
@@ -419,6 +468,10 @@ export interface FlowWithMetrics extends Flow {
 	metrics: FlowMetrics | null;
 }
 
+export interface FlowWithComputerUse extends Flow {
+	computer_use: FlowComputerUse | null;
+}
+
 export interface TestRunWithFlow extends TestRun {
 	flow: Flow | null;
 }
@@ -483,6 +536,16 @@ export interface Database {
 				Row: TestRun;
 				Insert: TestRunInsert;
 				Update: TestRunUpdate;
+			};
+			flow_computer_use: {
+				Row: FlowComputerUse;
+				Insert: FlowComputerUseInsert;
+				Update: FlowComputerUseUpdate;
+			};
+			telemetry_events: {
+				Row: TelemetryEvent;
+				Insert: TelemetryEventInsert;
+				Update: Partial<Omit<TelemetryEvent, "id" | "created_at">>;
 			};
 			analytics_events: {
 				Row: AnalyticsEvent;

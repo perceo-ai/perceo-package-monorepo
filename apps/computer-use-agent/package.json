@@ -1,0 +1,34 @@
+{
+	"name": "@perceo/computer-use-agent",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Perceo universal desktop agent: vision loop, VM adapters, flow manifest types",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": ["dist"],
+	"scripts": {
+		"build": "tsup src/index.ts --format esm --dts --clean --external @perceo/supabase && cp -r src/prompts dist/prompts",
+		"dev": "tsup src/index.ts --format esm --dts --watch --external @perceo/supabase",
+		"check-types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@perceo/supabase": "workspace:*"
+	},
+	"devDependencies": {
+		"@repo/typescript-config": "workspace:*",
+		"@types/node": "^20.11.0",
+		"tsup": "^8.0.1",
+		"typescript": "^5.3.3"
+	},
+	"engines": {
+		"node": ">=18"
+	}
+}

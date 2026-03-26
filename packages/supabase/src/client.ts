@@ -18,6 +18,11 @@ import type {
 	TestRun,
 	TestRunInsert,
 	TestRunUpdate,
+	FlowComputerUse,
+	FlowComputerUseInsert,
+	FlowComputerUseUpdate,
+	TelemetryEvent,
+	TelemetryEventInsert,
 	Insight,
 	InsightInsert,
 	InsightUpdate,
@@ -523,6 +528,53 @@ export class PerceoDataClient {
 	}
 
 	// ==========================================================================
+	// Computer-use (desktop) flow configuration
+	// ==========================================================================
+
+	async getFlowComputerUse(flowId: UUID): Promise<FlowComputerUse | null> {
+		const { data, error } = await this.supabase.from("flow_computer_use").select("*").eq("flow_id", flowId).maybeSingle();
+
+		if (error) throw error;
+		return data as FlowComputerUse | null;
+	}
+
+	async upsertFlowComputerUse(row: FlowComputerUseInsert): Promise<FlowComputerUse> {
+		const { data, error } = await this.supabase.from("flow_computer_use").upsert(row as any, { onConflict: "flow_id" }).select().single();
+
+		if (error) throw error;
+		return data as FlowComputerUse;
+	}
+
+	async updateFlowComputerUse(flowId: UUID, updates: FlowComputerUseUpdate): Promise<FlowComputerUse> {
+		const { data, error } = await this.supabase.from("flow_computer_use").update(updates as any).eq("flow_id", flowId).select().single();
+
+		if (error) throw error;
+		return data as FlowComputerUse;
+	}
+
+	/**
+	 * Upload a JPEG frame to the private computer-use bucket.
+	 * @returns Storage object path (first segment is project_id).
+	 */
+	async uploadComputerUseScreenshot(params: { projectId: UUID; runId: UUID; stepIndex: number; jpeg: Buffer }): Promise<string> {
+		const path = `${params.projectId}/${params.runId}/step-${params.stepIndex}.jpg`;
+		const { error } = await this.supabase.storage.from("computer-use").upload(path, params.jpeg, {
+			contentType: "image/jpeg",
+			upsert: true,
+		});
+
+		if (error) throw error;
+		return path;
+	}
+
+	async insertTelemetryEvent(event: TelemetryEventInsert): Promise<TelemetryEvent> {
+		const { data, error } = await this.supabase.from("telemetry_events").insert(event as any).select().single();
+
+		if (error) throw error;
+		return data as TelemetryEvent;
+	}
+
+	// ==========================================================================
 	// Steps
 	// ==========================================================================
 
@@ -557,6 +609,13 @@ export class PerceoDataClient {
 	// ==========================================================================
 	// Test Runs
 	// ==========================================================================
+
+	async getTestRun(id: UUID): Promise<TestRun | null> {
+		const { data, error } = await this.supabase.from("test_runs").select("*").eq("id", id).maybeSingle();
+
+		if (error) throw error;
+		return data as TestRun | null;
+	}
 
 	async getTestRuns(flowId: UUID, limit: number = 20): Promise<TestRun[]> {
 		const { data, error } = await this.supabase.from("test_runs").select("*").eq("flow_id", flowId).order("created_at", { ascending: false }).limit(limit);
@@ -596,6 +655,31 @@ export class PerceoDataClient {
 
 		if (error) throw error;
 		return data as TestRun;
+	}
+
+	/** Append one screenshot path and one log entry (computer-use step). */
+	async appendTestRunComputerUseStep(
+		runId: UUID,
+		entry: {
+			screenshotStoragePath?: string;
+			log: Record<string, unknown>;
+		},
+	): Promise<void> {
+		const run = await this.getTestRun(runId);
+		if (!run) throw new Error(`test run not found: ${runId}`);
+
+		const screenshots = [...(run.screenshots ?? [])];
+		if (entry.screenshotStoragePath) {
+			screenshots.push(entry.screenshotStoragePath);
+		}
+
+		const logs = [...((run.logs ?? []) as unknown[])];
+		logs.push(entry.log);
+
+		await this.updateTestRun(runId, {
+			screenshots,
+			logs: logs as unknown[],
+		} as TestRunUpdate);
 	}
 
 	// ==========================================================================

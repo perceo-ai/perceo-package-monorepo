@@ -3,3 +3,4 @@
  */
 
 export * from './bootstrap-project.workflow';
+export * from './computer-use-run.workflow';

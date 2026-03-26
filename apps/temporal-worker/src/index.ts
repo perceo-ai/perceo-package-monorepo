@@ -186,6 +186,56 @@ async function run() {
 				return;
 			}
 
+			// POST /api/workflows/computer-use-run — desktop vision agent on GCP Windows + HTTP RDP bridge
+			if (req.method === "POST" && req.url === "/api/workflows/computer-use-run") {
+				const body = await parseBody(req);
+				const { projectId, flowIds, workflowApiKey, prNumber, commitSha, branchName } = body;
+
+				if (!projectId || !workflowApiKey) {
+					sendJSON(res, 400, { error: "Missing projectId or workflowApiKey" });
+					return;
+				}
+
+				if (!Array.isArray(flowIds) || flowIds.length === 0) {
+					sendJSON(res, 400, { error: "flowIds must be a non-empty array of flow UUIDs" });
+					return;
+				}
+
+				const supabaseUrl = process.env.PERCEO_SUPABASE_URL || DEFAULT_SUPABASE_URL;
+				const supabaseServiceRoleKey = process.env.PERCEO_SUPABASE_SERVICE_ROLE_KEY;
+
+				if (!supabaseServiceRoleKey) {
+					sendJSON(res, 500, { error: "Server configuration error: missing PERCEO_SUPABASE_SERVICE_ROLE_KEY" });
+					return;
+				}
+
+				const workflowId = `computer-use-${projectId}-${Date.now()}`;
+				logger.info("Starting computer-use run workflow", { workflowId, projectId, flowCount: flowIds.length });
+
+				const handle = await client.workflow.start("computerUseRunWorkflow", {
+					taskQueue: config.taskQueue,
+					workflowId,
+					args: [
+						{
+							projectId,
+							flowIds,
+							workflowApiKey,
+							supabaseUrl,
+							supabaseServiceRoleKey,
+							prNumber,
+							commitSha,
+							branchName,
+						},
+					],
+				});
+
+				sendJSON(res, 200, {
+					workflowId: handle.workflowId,
+					message: "Computer-use workflow started",
+				});
+				return;
+			}
+
 			// GET /api/workflows/:workflowId - Query workflow status
 			if (req.method === "GET" && req.url?.startsWith("/api/workflows/")) {
 				const workflowId = req.url.split("/api/workflows/")[1]?.split("?")[0];
@@ -257,7 +307,12 @@ async function run() {
 	server.listen(parseInt(port, 10), () => {
 		logger.info("HTTP API server listening", {
 			port: parseInt(port, 10),
-			endpoints: ["POST /api/workflows/bootstrap", "GET /api/workflows/:id", "GET /health"],
+			endpoints: [
+				"POST /api/workflows/bootstrap",
+				"POST /api/workflows/computer-use-run",
+				"GET /api/workflows/:id",
+				"GET /health",
+			],
 		});
 	});
 
